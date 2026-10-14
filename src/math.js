@@ -35,14 +35,16 @@ function difference(a, b, total, tolerance = 0) {
     cosine: normA > 0 && normB > 0 ? Math.max(-1, Math.min(1, dot / Math.sqrt(normA * normB))) : null };
 }
 function structureDiff(base, target) {
+  const shape = t => t.logicalShape || t.shape;
+  const info = t => ({ shape: shape(t), dtype: t.quantization?.decodedDtype ? t.quantization.scheme.toUpperCase() : t.dtype, elements: t.logicalElements ?? t.elements });
   const a = new Map(base.tensors.map(t => [t.name, t])), b = new Map(target.tensors.map(t => [t.name, t]));
   return [...new Set([...a.keys(), ...b.keys()])].sort((x, y) => x.localeCompare(y, undefined, { numeric: true })).map(name => {
     const left = a.get(name), right = b.get(name);
-    const shapeChanged = left && right && JSON.stringify(left.shape) !== JSON.stringify(right.shape);
-    const dtypeChanged = left && right && left.dtype !== right.dtype;
+    const shapeChanged = left && right && JSON.stringify(shape(left)) !== JSON.stringify(shape(right));
+    const dtypeChanged = left && right && info(left).dtype !== info(right).dtype;
     const basisChanged = left && right && (left.valueBasis || 'Weight values') !== (right.valueBasis || 'Weight values');
-    return { name, left: left ? { shape: left.shape, dtype: left.dtype, elements: left.elements } : null,
-      right: right ? { shape: right.shape, dtype: right.dtype, elements: right.elements } : null,
+    return { name, left: left ? info(left) : null,
+      right: right ? info(right) : null,
       dtypeChanged: Boolean(dtypeChanged), status: !left ? 'added' : !right ? 'removed' : shapeChanged ? 'shape-changed' : basisChanged ? 'basis-changed' : 'unverified' };
   });
 }

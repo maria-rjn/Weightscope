@@ -8,6 +8,7 @@ const { parseGGUF, decodeBlock } = require('./parsers/gguf');
 const { parseONNX, varint } = require('./parsers/onnx');
 const { statistics, difference, structureDiff } = require('./math');
 const ollama = require('./ollama');
+const mxfp8 = require('./quantization/mxfp8');
 
 function identity(s) { return `${s.size}:${s.mtimeMs}:${s.ctimeMs}:${s.ino}`; }
 async function assertCurrent(model) {
@@ -91,31 +92,48 @@ async function inspectOllama(file, options) {
   let model;
   if (entry.modelPath) model = await inspect(entry.modelPath, options);
   else {
-    const tensors = [], names = new Map(), shards = new Map(), metadata = { blobs: [] }, warnings = new Set();
+    const tensors = [], names = new Map(), shards = new Map(), schemes = new Map(), metadata = { blobs: [] }, warnings = new Set();
     const layerNames = new Set(entry.layers.map(l => l.name));
     let fileBytes = 0;
     for (const layer of entry.layers.filter(l => l.kind === 'tensor')) {
       cancelled(options.signal);
       let shard = shards.get(layer.path);
       if (!shard) { shard = await inspect(layer.path, { ...options, format: 'safetensors' }); shards.set(layer.path, shard); fileBytes = safeInteger(fileBytes + shard.fileBytes, 'Ollama weight bytes'); }
-      const explicitScheme = typeof shard.metadata.quant_type === 'string' ? shard.metadata.quant_type : null;
       metadata.blobs.push({ name: layer.name, digest: layer.digest, metadata: shard.metadata });
       for (const tensor of shard.tensors) {
         const name = tensor.name === 'data' && typeof layer.name === 'string' && layer.name ? layer.name : tensor.name;
         const storageKey = `${layer.path}:${tensor.storage.offset}`;
         if (names.has(name)) { if (names.get(name) === storageKey) continue; throw new Error(`Duplicate Ollama tensor name: ${name}`); } names.set(name, storageKey);
         const t = { ...tensor, name, storage: { ...tensor.storage, file: shard.path, identity: shard.identity } };
-        const packed = tensor.dtype === 'U32' && (layerNames.has(`${name}_scale`) || layerNames.has(`${name}_qbias`));
-        const scheme = explicitScheme || (packed ? source.quantization || 'packed integer' : null);
-        if (scheme) {
-          t.quantization = { scheme, decoded: false };
-          t.valueBasis = `Packed Ollama ${scheme} storage; numerical decoding unavailable`;
-          t.storage.kind = 'unsupported'; t.storage.reason = `Numerical decoding for Ollama ${scheme} is unavailable. Shapes and counts describe stored codes and scales, not dequantized weights.`;
-          t.analysisUnavailable = t.storage.reason;
-          warnings.add(t.storage.reason);
+        // Blob-wide quantization metadata describes the packed weights, not
+        // their scale bytes or ordinary floating-point tensors in the blob.
+        const perTensorScheme = shard.metadata[`${tensor.name}.quant_type`] ?? shard.metadata[`${name}.quant_type`];
+        const explicitScheme = perTensorScheme ?? shard.metadata.quant_type;
+        const packed = tensor.dtype === 'U32' && ['.scale', '_scale', '.bias', '_qbias'].some(suffix => layerNames.has(name + suffix) || shard.byName.has(tensor.name + suffix));
+        if (typeof perTensorScheme === 'string' || (tensor.dtype === 'U32' && (typeof explicitScheme === 'string' || packed))) {
+          schemes.set(name, { scheme: typeof explicitScheme === 'string' ? explicitScheme : source.quantization || 'packed integer',
+            groupSize: shard.metadata[`${tensor.name}.group_size`] ?? shard.metadata[`${name}.group_size`] ?? shard.metadata.group_size ?? 32 });
         }
         tensors.push(t);
       }
+    }
+    const byName = new Map(tensors.map(t => [t.name, t]));
+    for (const [name, { scheme, groupSize }] of schemes) {
+      const t = byName.get(name);
+      t.quantization = { scheme, decoded: false };
+      let reason = `Numerical decoding for Ollama ${scheme} is unavailable. Shapes and counts describe stored codes and scales, not dequantized weights.`;
+      if (scheme.trim().toLowerCase() === 'mxfp8') {
+        const scale = byName.get(`${name}.scale`) || byName.get(`${name}_scale`);
+        try {
+          Object.assign(t, mxfp8.layout(t, scale, groupSize, byName.has(`${name}.bias`) || byName.has(`${name}_qbias`)));
+          t.storage.kind = 'ollama-mxfp8'; t.storage.scale = { ...scale.storage };
+          scale.valueBasis = 'Stored MXFP8 E8M0 scale codes (not weight values)';
+          continue;
+        } catch (e) { reason = `Numerical decoding for Ollama MXFP8 is unavailable: ${e.message} Shapes and counts describe stored codes, not dequantized weights.`; }
+      }
+      t.valueBasis = `Packed Ollama ${scheme} storage; numerical decoding unavailable`;
+      t.storage.kind = 'unsupported'; t.storage.reason = reason;
+      t.analysisUnavailable = reason; warnings.add(reason);
     }
     model = { format: 'safetensors', tensors, metadata, warnings: [...warnings], path: file, identity: dependencies[0].identity, fileBytes };
     model.summary = summarize(model); model.byName = new Map(tensors.map(t => [t.name, t]));
@@ -204,7 +222,7 @@ async function sample(model, name, options = {}) {
   cancelled(options.signal); await assertCurrent(model);
   const tensor = model.byName.get(name);
   if (!tensor) throw new Error('Unknown tensor.');
-  const windows = sampleWindows(tensor.elements, options.sampleSize || 32768);
+  const windows = sampleWindows(tensor.logicalElements ?? tensor.elements, options.sampleSize || 32768);
   let values;
   if (model.format === 'pytorch') {
     const result = await pythonRequest({ action: 'sample', path: model.path, name, windows }, options);
@@ -214,25 +232,33 @@ async function sample(model, name, options = {}) {
     const current = external?.tensor || tensor;
     const storageFile = tensor.storage.file;
     if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error('An Ollama weight blob changed on disk. Refresh the inspector before analyzing it.');
+    const scale = tensor.storage.scale;
+    if (scale && identity(await fs.stat(scale.file)) !== scale.identity) throw new Error('An Ollama scale blob changed on disk. Refresh the inspector before analyzing it.');
     const reader = await Reader.open(external?.file || storageFile || model.path, options.signal);
+    let scaleReader;
     try {
       if (current.storage.kind === 'unsupported') throw new Error(current.storage.reason);
-      values = current.storage.kind === 'onnx-typed' ? await typedValues(reader, current, windows) : await rawValues(reader, current, windows);
+      if (current.storage.kind === 'ollama-mxfp8') {
+        scaleReader = scale.file === storageFile ? reader : await Reader.open(scale.file, options.signal);
+        values = await mxfp8.sample(reader, scaleReader, current, windows);
+      } else values = current.storage.kind === 'onnx-typed' ? await typedValues(reader, current, windows) : await rawValues(reader, current, windows);
       if (external && identity(await fs.stat(external.file)) !== external.identity) throw new Error('External ONNX weights changed during analysis. Retry the operation.');
       if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error('An Ollama weight blob changed during analysis. Refresh the inspector.');
-    } finally { await reader.close(); }
+      if (scale && identity(await fs.stat(scale.file)) !== scale.identity) throw new Error('An Ollama scale blob changed during analysis. Refresh the inspector.');
+    } finally { if (scaleReader && scaleReader !== reader) await scaleReader.close(); await reader.close(); }
   }
   await assertCurrent(model); cancelled(options.signal);
   return values;
 }
 async function tensorStatistics(model, name, options) {
   const tensor = model.byName.get(name);
-  return statistics(await sample(model, name, options), tensor.elements, tensor.valueBasis || 'Weight values');
+  return statistics(await sample(model, name, options), tensor.logicalElements ?? tensor.elements, tensor.valueBasis || 'Weight values');
 }
 async function compareTensor(base, target, name, options = {}) {
   const row = structureDiff({ tensors: [base.byName.get(name)].filter(Boolean) }, { tensors: [target.byName.get(name)].filter(Boolean) })[0];
   if (!row || row.status !== 'unverified') throw new Error('This tensor has incompatible shapes or numerical units, or is missing from a checkpoint.');
   const left = await sample(base, name, options), right = await sample(target, name, options);
-  return difference(left, right, base.byName.get(name).elements, options.absoluteTolerance || 0);
+  const tensor = base.byName.get(name);
+  return difference(left, right, tensor.logicalElements ?? tensor.elements, options.absoluteTolerance || 0);
 }
 module.exports = { inspect, publicModel, sample, tensorStatistics, compareTensor, structureDiff, pythonRequest };

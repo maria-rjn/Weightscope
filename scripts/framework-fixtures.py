@@ -8,6 +8,8 @@ import onnx
 from onnx import helper, numpy_helper, TensorProto
 from safetensors.torch import save_file
 import gguf
+import hashlib
+from safetensors.numpy import save_file as save_numpy
 
 directory = Path(sys.argv[1])
 directory.mkdir(parents=True, exist_ok=True)
@@ -62,4 +64,33 @@ writer.write_kv_data_to_file()
 writer.write_tensors_to_file()
 writer.close()
 (directory / "expected.json").write_text(json.dumps(expected))
+
+# Independently check every E4M3FN code against every E8M0 scale using
+# PyTorch's dtype conversions, including NaNs and float32 overflow/underflow.
+codes = np.tile(np.arange(256, dtype=np.uint8), (256, 1))
+scale_codes = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 8, axis=1)
+packed = codes.copy().view("<u4")
+fp8 = torch.from_numpy(codes.copy()).view(torch.float8_e4m3fn).float()
+scales = torch.from_numpy(scale_codes.copy()).view(torch.float8_e8m0fnu).float()
+decoded = (fp8 * scales.repeat_interleave(32, dim=-1)).flatten().tolist()
+def json_float(value):
+    if np.isnan(value):
+        return "NaN"
+    if np.isposinf(value):
+        return "Infinity"
+    if np.isneginf(value):
+        return "-Infinity"
+    return value
+(directory / "mxfp8-expected.json").write_text(json.dumps(list(map(json_float, decoded)), allow_nan=False))
+ollama_root = directory / "ollama"
+blob_dir = ollama_root / "blobs"
+blob_dir.mkdir(parents=True)
+blob_file = blob_dir / "temporary"
+save_numpy({"packed.weight": packed, "packed.weight.scale": scale_codes}, str(blob_file), metadata={"quant_type": "mxfp8", "group_size": "32"})
+digest = hashlib.sha256(blob_file.read_bytes()).hexdigest()
+size = blob_file.stat().st_size
+blob_file.rename(blob_dir / f"sha256-{digest}")
+manifest_dir = ollama_root / "manifests" / "registry.ollama.ai" / "library" / "mxfp8"
+manifest_dir.mkdir(parents=True)
+(manifest_dir / "latest").write_text(json.dumps({"schemaVersion": 2, "layers": [{"mediaType": "application/vnd.ollama.image.tensor", "digest": f"sha256:{digest}", "size": size}]}))
 print("Generated official framework fixtures.")

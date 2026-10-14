@@ -40,6 +40,14 @@ test('upstream GGUF writer and official dequantizers agree with scalar, primary 
     bounded.forEach((v, i) => assert.ok(Math.abs(v - reference[i]) < 1e-5));
   }
 });
+test('MXFP8 agrees with PyTorch for every FP8 code and E8M0 scale, in full and bounded samples', { skip: !pythonPath }, async () => {
+  const model = await backend.inspect(path.join(dir, 'ollama', 'manifests', 'registry.ollama.ai', 'library', 'mxfp8', 'latest'));
+  const expected = JSON.parse(await fs.readFile(path.join(dir, 'mxfp8-expected.json'), 'utf8')).map(v => v === 'NaN' ? NaN : v === 'Infinity' ? Infinity : v === '-Infinity' ? -Infinity : v);
+  assert.equal(expected.length, 65536);
+  assert.deepEqual(await backend.sample(model, 'packed.weight', { sampleSize: 65536 }), expected);
+  const bounded = await backend.sample(model, 'packed.weight', { sampleSize: 32768 });
+  assert.deepEqual(bounded, sampleWindows(expected.length, 32768).flatMap(w => expected.slice(w.start, w.start + w.count)));
+});
 test('real PyTorch metadata excludes optimizer state, samples BF16 and noncontiguous tensors', { skip: !pythonPath }, async () => {
   const m = await backend.inspect(path.join(dir, 'official.pt'), options);
   assert.equal(m.summary.parameters, 27); assert.equal(m.metadata.epoch, 7); assert.equal(m.byName.get('layer.bias').dtype, 'BF16');
