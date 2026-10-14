@@ -1,0 +1,136 @@
+{
+  "name": "weightscope",
+  "displayName": "WeightScope — Model & Checkpoint Inspector",
+  "description": "Inspect model layers, tensor health, precision and checkpoint drift locally, on demand.",
+  "version": "0.2.0",
+  "publisher": "weightscope-local",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maria-rjn/Weightscope.git"
+  },
+  "homepage": "https://github.com/maria-rjn/Weightscope#readme",
+  "bugs": {
+    "url": "https://github.com/maria-rjn/Weightscope/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Data Science",
+    "Other"
+  ],
+  "keywords": [
+    "safetensors",
+    "checkpoint",
+    "gguf",
+    "onnx",
+    "pytorch"
+  ],
+  "main": "./src/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Native model readers work in Restricted Mode. PyTorch inspection requires a trusted workspace."
+    },
+    "virtualWorkspaces": false
+  },
+  "activationEvents": [
+    "onCustomEditor:weightscope.inspector"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "weightscope.open",
+        "title": "WeightScope: Inspect Model"
+      },
+      {
+        "command": "weightscope.compare",
+        "title": "WeightScope: Compare Checkpoints"
+      },
+      {
+        "command": "weightscope.setup",
+        "title": "WeightScope: PyTorch Setup Instructions"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "weightscope.inspector",
+        "displayName": "WeightScope",
+        "selector": [
+          {
+            "filenamePattern": "*.safetensors"
+          },
+          {
+            "filenamePattern": "*.gguf"
+          },
+          {
+            "filenamePattern": "*.onnx"
+          },
+          {
+            "filenamePattern": "*.pt"
+          },
+          {
+            "filenamePattern": "*.pth"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "weightscope.open",
+          "when": "resourceExtname =~ /\\.(safetensors|gguf|onnx|pt|pth)$/",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "WeightScope",
+      "properties": {
+        "weightscope.pythonPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Python executable with PyTorch >= 2.6 installed. Empty uses python3 (or py -3 on Windows). Only needed for .pt/.pth."
+        },
+        "weightscope.sampleSize": {
+          "type": "integer",
+          "default": 32768,
+          "minimum": 256,
+          "maximum": 262144,
+          "description": "Maximum values sampled per tensor. Small tensors are analyzed in full; large tensors use evenly spaced windows."
+        },
+        "weightscope.maxDiffTensors": {
+          "type": "integer",
+          "default": 500,
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Maximum compatible tensors analyzed per batch comparison. Individual rows can always be analyzed."
+        },
+        "weightscope.absoluteTolerance": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Absolute tolerance when classifying numerical checkpoint differences."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check.js",
+    "demo": "node scripts/make-demo.js",
+    "preview": "node scripts/preview.js",
+    "package": "node scripts/package.js",
+    "test:integration": "node --test test/integration.test.js"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^4.0.0"
+  }
+}

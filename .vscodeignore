@@ -1,0 +1,16 @@
+.vscode/**
+.test-runtime/**
+node_modules/**
+test/**
+scripts/**
+examples/**
+artifacts/**
+output/**
+.playwright-cli/**
+.gitignore
+.DS_Store
+docs/images/**
+package-lock.json
+**/__pycache__/**
+**/*.pyc
+**/*.vsix

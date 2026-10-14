@@ -1,0 +1,10 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const manifest = require('../package.json');
+const vsce = require.resolve('@vscode/vsce/package.json');
+const tool = JSON.parse(fs.readFileSync(vsce, 'utf8'));
+fs.mkdirSync(path.join(__dirname, '..', 'artifacts'), { recursive: true });
+const result = spawnSync(process.execPath, [path.join(path.dirname(vsce), tool.bin.vsce), 'package', '--no-dependencies', '--allow-missing-repository', '--no-rewrite-relative-links', '--out', `artifacts/weightscope-${manifest.version}.vsix`], { cwd: path.join(__dirname, '..'), stdio: 'inherit' });
+process.exitCode = result.status ?? 1;

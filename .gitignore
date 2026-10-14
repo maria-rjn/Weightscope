@@ -1,0 +1,17 @@
+node_modules/
+.DS_Store
+Thumbs.db
+.env
+.env.*
+.test-runtime/
+__pycache__/
+*.pyc
+artifacts/
+*.vsix
+examples/*.safetensors
+examples/*.gguf
+examples/*.onnx
+examples/*.pt
+examples/*.pth
+.playwright-cli/
+output/
