@@ -2,7 +2,7 @@
   "name": "weightscope",
   "displayName": "WeightScope — Model & Checkpoint Inspector",
   "description": "Inspect model layers, tensor health, precision and checkpoint drift locally, on demand.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "weightscope-local",
   "license": "MIT",
   "repository": {
@@ -26,7 +26,8 @@
     "checkpoint",
     "gguf",
     "onnx",
-    "pytorch"
+    "pytorch",
+    "ollama"
   ],
   "main": "./src/extension.js",
   "extensionKind": [
@@ -47,6 +48,14 @@
       {
         "command": "weightscope.open",
         "title": "WeightScope: Inspect Model"
+      },
+      {
+        "command": "weightscope.openOllama",
+        "title": "WeightScope: Open Ollama Model"
+      },
+      {
+        "command": "weightscope.compareOllama",
+        "title": "WeightScope: Compare Ollama Models"
       },
       {
         "command": "weightscope.compare",
@@ -118,6 +127,12 @@
           "default": 0,
           "minimum": 0,
           "description": "Absolute tolerance when classifying numerical checkpoint differences."
+        },
+        "weightscope.ollamaModelsPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Ollama models directory containing manifests and blobs. Empty uses OLLAMA_MODELS or the default local store. For Remote SSH, set the path on the remote host."
         }
       }
     }
