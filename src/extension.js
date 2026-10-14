@@ -3,7 +3,9 @@ const vscode = require('vscode');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
+const os = require('node:os');
 const backend = require('./backend');
+const ollama = require('./ollama');
 const VIEW = 'weightscope.inspector';
 const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'] };
 
@@ -23,8 +25,38 @@ function html(webview, root) {
 }
 function activate(context) {
   const panels = new Map(), pending = new Map();
+  let ollamaFolder;
   const open = uri => vscode.commands.executeCommand('vscode.openWith', uri, VIEW);
   const setup = () => vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.joinPath(context.extensionUri, 'docs', 'PYTORCH.md'));
+  async function chooseOllama(title) {
+    while (true) {
+      const configured = ollamaFolder || vscode.workspace.getConfiguration('weightscope').get('ollamaModelsPath', '');
+      const { root, searched } = await ollama.findRoot(configured);
+      const items = (async () => {
+        const models = root ? await ollama.listModels(root) : [];
+        return [...models.map(entry => ({ label: entry.name, description: entry.problem ? 'Unavailable' : `${(entry.size / 1024 ** 3).toFixed(2)} GiB · ${entry.format.toUpperCase()}`,
+          detail: entry.problem || `${entry.layers.filter(l => ['model', 'tensor'].includes(l.kind)).length} weight blob(s) · ${root}`, entry })),
+        { label: 'Choose Ollama models folder…', detail: root || `No local catalog found. Checked: ${searched.join(', ')}`, browse: true }];
+      })();
+      const choice = await vscode.window.showQuickPick(items, { title, placeHolder: 'Search downloaded models, or choose a folder containing manifests and blobs', matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
+      if (!choice) return;
+      if (choice.browse) {
+        const folder = (await vscode.window.showOpenDialog({ title: 'Choose Ollama models folder (contains manifests and blobs)', canSelectFiles: false, canSelectFolders: true, canSelectMany: false }))?.[0];
+        if (!folder) return;
+        if (folder.scheme !== 'file') throw new Error('Choose an Ollama store on the extension host.');
+        const found = await ollama.findRoot(folder.fsPath);
+        if (!found.root) { await vscode.window.showErrorMessage('This folder has no manifests directory. Choose the Ollama models folder.'); continue; }
+        ollamaFolder = found.root; continue;
+      }
+      if (choice.entry.problem) { await vscode.window.showErrorMessage(`${choice.entry.name}: ${choice.entry.problem}`); continue; }
+      return vscode.Uri.file(choice.entry.manifestPath);
+    }
+  }
+  async function compareFiles(base, target) {
+    const panel = panels.get(base.toString());
+    if (panel) { await open(base); await panel.compare(target); }
+    else { pending.set(base.toString(), target); await open(base); }
+  }
   const provider = {
     openCustomDocument(uri) {
       if (uri.scheme !== 'file') throw new Error('WeightScope needs a file on the extension host. Remote SSH works when installed on that host; virtual file systems are not supported.');
@@ -68,6 +100,8 @@ function activate(context) {
         },
         refresh,
         compare: () => compare(),
+        openOllama: async () => { const chosen = await chooseOllama('Open a downloaded Ollama model'); if (chosen) await open(chosen); },
+        compareOllama: async () => { const chosen = await chooseOllama('Select an Ollama model to compare with the current model'); if (chosen) await compare(chosen); },
         stats: message => run('Analyzing tensor values…', async options => {
           if (!model?.byName.has(message.name)) throw new Error('Choose a tensor first.');
           const data = await backend.tensorStatistics(model, message.name, options); stats.set(message.name, data);
@@ -90,13 +124,14 @@ function activate(context) {
         setup,
         export: async () => {
           if (!model) return;
-          const output = await vscode.window.showSaveDialog({ title: 'Export WeightScope report', defaultUri: vscode.Uri.file(path.join(path.dirname(uri.fsPath), `${path.basename(uri.fsPath)}.weightscope.json`)), filters: { JSON: ['json'] } });
+          const defaultPath = model.source?.kind === 'ollama' ? path.join(os.homedir(), `${model.source.name.replace(/[^a-zA-Z0-9._-]/g, '_')}.weightscope.json`) : path.join(path.dirname(uri.fsPath), `${path.basename(uri.fsPath)}.weightscope.json`);
+          const output = await vscode.window.showSaveDialog({ title: 'Export WeightScope report', defaultUri: vscode.Uri.file(defaultPath), filters: { JSON: ['json'] } });
           if (!output) return;
-          const protectedPaths = [model.path, target?.path].filter(Boolean).map(p => path.resolve(p));
+          const protectedPaths = [model.path, target?.path, ...(model.protectedPaths || []), ...(target?.protectedPaths || [])].filter(Boolean).map(p => path.resolve(p));
           if (output.scheme === 'file' && protectedPaths.includes(path.resolve(output.fsPath))) throw new Error('A report cannot overwrite an inspected checkpoint.');
           if (output.scheme === 'file') {
             const destination = await fs.realpath(output.fsPath).catch(e => { if (e.code === 'ENOENT') return path.resolve(output.fsPath); throw e; });
-            for (const checkpoint of protectedPaths) if (destination === await fs.realpath(checkpoint)) throw new Error('A report cannot overwrite an inspected checkpoint through a symlink.');
+            for (const checkpoint of protectedPaths) if (destination === await fs.realpath(checkpoint).catch(e => { if (e.code === 'ENOENT') return checkpoint; throw e; })) throw new Error('A report cannot overwrite an inspected checkpoint through a symlink.');
           }
           const report = { version: 1, exportedAt: new Date().toISOString(), model: backend.publicModel(model), statistics: Object.fromEntries(stats),
             comparison: target ? { target: backend.publicModel(target), rows } : null,
@@ -118,12 +153,20 @@ function activate(context) {
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(VIEW, provider, { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false }),
     vscode.commands.registerCommand('weightscope.open', async uri => { const chosen = uri || await choose('Inspect a model checkpoint'); if (chosen) await open(chosen); }),
+    vscode.commands.registerCommand('weightscope.openOllama', async () => {
+      try { const chosen = await chooseOllama('Open a downloaded Ollama model'); if (chosen) await open(chosen); }
+      catch (e) { await vscode.window.showErrorMessage(`WeightScope: ${e.message}`); }
+    }),
+    vscode.commands.registerCommand('weightscope.compareOllama', async () => {
+      try {
+        const base = await chooseOllama('Select baseline Ollama model'); if (!base) return;
+        const target = await chooseOllama('Select target Ollama model'); if (target) await compareFiles(base, target);
+      } catch (e) { await vscode.window.showErrorMessage(`WeightScope: ${e.message}`); }
+    }),
     vscode.commands.registerCommand('weightscope.compare', async () => {
       const base = await choose('Select baseline checkpoint'); if (!base) return;
       const target = await choose('Select target checkpoint'); if (!target) return;
-      const panel = panels.get(base.toString());
-      if (panel) { await open(base); await panel.compare(target); }
-      else { pending.set(base.toString(), target); await open(base); }
+      await compareFiles(base, target);
     }),
     vscode.commands.registerCommand('weightscope.setup', setup)
   );

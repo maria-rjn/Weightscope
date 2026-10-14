@@ -7,10 +7,12 @@ const { parseSafetensors } = require('./parsers/safetensors');
 const { parseGGUF, decodeBlock } = require('./parsers/gguf');
 const { parseONNX, varint } = require('./parsers/onnx');
 const { statistics, difference, structureDiff } = require('./math');
+const ollama = require('./ollama');
 
 function identity(s) { return `${s.size}:${s.mtimeMs}:${s.ctimeMs}:${s.ino}`; }
 async function assertCurrent(model) {
   if (identity(await fs.stat(model.path)) !== model.identity) throw new Error('The checkpoint changed on disk. Refresh the inspector before analyzing it.');
+  for (const item of model.dependencies || []) if (identity(await fs.stat(item.path)) !== item.identity) throw new Error('An Ollama manifest changed on disk. Refresh the inspector before analyzing it.');
 }
 function summarize(model) {
   const dtypes = Object.create(null);
@@ -25,7 +27,7 @@ function summarize(model) {
     quantizedTensors: model.tensors.filter(t => t.quantization).length };
 }
 function publicModel(model) {
-  return { name: path.basename(model.path), path: model.path, format: model.format, metadata: model.metadata, warnings: model.warnings,
+  return { name: model.source?.name || path.basename(model.path), path: model.path, format: model.format, metadata: model.metadata, warnings: model.warnings, source: model.source,
     summary: model.summary, nodes: model.nodes || [], tensors: model.tensors.map(({ storage, ...t }) => t) };
 }
 function pythonRequest(request, options = {}) {
@@ -56,6 +58,8 @@ function pythonRequest(request, options = {}) {
   });
 }
 async function inspect(file, options = {}) {
+  cancelled(options.signal);
+  if (ollama.manifestLocation(file)) return inspectOllama(file, options);
   const stat = await fs.stat(file);
   if (!stat.isFile()) throw new Error('Choose a model file, not a directory.');
   const ext = path.extname(file).toLowerCase();
@@ -64,16 +68,63 @@ async function inspect(file, options = {}) {
   else {
     const reader = await Reader.open(file, options.signal);
     try {
-      if (ext === '.safetensors') parsed = await parseSafetensors(reader);
+      if (ext === '.safetensors' || options.format === 'safetensors') parsed = await parseSafetensors(reader);
       else if (ext === '.gguf') parsed = await parseGGUF(reader);
       else if (ext === '.onnx') parsed = await parseONNX(reader);
-      else throw new Error('Supported model files: .safetensors, .gguf, .onnx, .pt, .pth.');
+      else if (reader.size >= 4 && (await reader.read(0, 4)).toString('ascii') === 'GGUF') parsed = await parseGGUF(reader);
+      else throw new Error('Supported model files: .safetensors, .gguf, .onnx, .pt, .pth, or a GGUF blob. Use Open Ollama Model for downloaded models.');
     } finally { await reader.close(); }
   }
   const model = { ...parsed, path: file, identity: identity(stat), fileBytes: stat.size };
   await assertCurrent(model);
   model.summary = summarize(model);
   model.byName = new Map(model.tensors.map(t => [t.name, t]));
+  return model;
+}
+async function inspectOllama(file, options) {
+  const manifestStat = await fs.stat(file), entry = await ollama.fromManifest(file);
+  if (entry.problem) throw new Error(`${entry.name}: ${entry.problem}`);
+  const dependencies = [];
+  for (const dependency of [file, ...(entry.selectedPaths || [])]) dependencies.push({ path: dependency, identity: identity(await fs.stat(dependency)) });
+  if (identity(manifestStat) !== dependencies[0].identity) throw new Error('Ollama manifest changed during inspection. Refresh the inspector.');
+  const source = await ollama.details(entry, options);
+  let model;
+  if (entry.modelPath) model = await inspect(entry.modelPath, options);
+  else {
+    const tensors = [], names = new Map(), shards = new Map(), metadata = { blobs: [] }, warnings = new Set();
+    const layerNames = new Set(entry.layers.map(l => l.name));
+    let fileBytes = 0;
+    for (const layer of entry.layers.filter(l => l.kind === 'tensor')) {
+      cancelled(options.signal);
+      let shard = shards.get(layer.path);
+      if (!shard) { shard = await inspect(layer.path, { ...options, format: 'safetensors' }); shards.set(layer.path, shard); fileBytes = safeInteger(fileBytes + shard.fileBytes, 'Ollama weight bytes'); }
+      const explicitScheme = typeof shard.metadata.quant_type === 'string' ? shard.metadata.quant_type : null;
+      metadata.blobs.push({ name: layer.name, digest: layer.digest, metadata: shard.metadata });
+      for (const tensor of shard.tensors) {
+        const name = tensor.name === 'data' && typeof layer.name === 'string' && layer.name ? layer.name : tensor.name;
+        const storageKey = `${layer.path}:${tensor.storage.offset}`;
+        if (names.has(name)) { if (names.get(name) === storageKey) continue; throw new Error(`Duplicate Ollama tensor name: ${name}`); } names.set(name, storageKey);
+        const t = { ...tensor, name, storage: { ...tensor.storage, file: shard.path, identity: shard.identity } };
+        const packed = tensor.dtype === 'U32' && (layerNames.has(`${name}_scale`) || layerNames.has(`${name}_qbias`));
+        const scheme = explicitScheme || (packed ? source.quantization || 'packed integer' : null);
+        if (scheme) {
+          t.quantization = { scheme, decoded: false };
+          t.valueBasis = `Packed Ollama ${scheme} storage; numerical decoding unavailable`;
+          t.storage.kind = 'unsupported'; t.storage.reason = `Numerical decoding for Ollama ${scheme} is unavailable. Shapes and counts describe stored codes and scales, not dequantized weights.`;
+          t.analysisUnavailable = t.storage.reason;
+          warnings.add(t.storage.reason);
+        }
+        tensors.push(t);
+      }
+    }
+    model = { format: 'safetensors', tensors, metadata, warnings: [...warnings], path: file, identity: dependencies[0].identity, fileBytes };
+    model.summary = summarize(model); model.byName = new Map(tensors.map(t => [t.name, t]));
+  }
+  model.source = source;
+  model.protectedPaths = ollama.protectedPaths(entry); model.dependencies = dependencies;
+  model.warnings.push(...(model.source.warnings || []));
+  if (model.source.extraWeights.length) model.warnings.push('Adapter/projector blobs are listed in Model details; totals and analysis cover the primary weights only.');
+  await assertCurrent(model);
   return model;
 }
 async function rawValues(reader, tensor, windows) {
@@ -161,11 +212,14 @@ async function sample(model, name, options = {}) {
   } else {
     const external = tensor.storage.kind === 'external' ? await externalStorage(model, tensor) : null;
     const current = external?.tensor || tensor;
-    const reader = await Reader.open(external?.file || model.path, options.signal);
+    const storageFile = tensor.storage.file;
+    if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error('An Ollama weight blob changed on disk. Refresh the inspector before analyzing it.');
+    const reader = await Reader.open(external?.file || storageFile || model.path, options.signal);
     try {
       if (current.storage.kind === 'unsupported') throw new Error(current.storage.reason);
       values = current.storage.kind === 'onnx-typed' ? await typedValues(reader, current, windows) : await rawValues(reader, current, windows);
       if (external && identity(await fs.stat(external.file)) !== external.identity) throw new Error('External ONNX weights changed during analysis. Retry the operation.');
+      if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error('An Ollama weight blob changed during analysis. Refresh the inspector.');
     } finally { await reader.close(); }
   }
   await assertCurrent(model); cancelled(options.signal);

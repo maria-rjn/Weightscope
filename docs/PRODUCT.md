@@ -20,6 +20,8 @@ The product promise is: **Understand a checkpoint and its drift without writing 
 
 Version 0.2.0 simplifies the first-use workflow: visual layer groups lead into tensor inspection, a focused drawer holds diagnostics, and a change map precedes detailed comparison rows. Advanced statistics, raw metadata, the tensor tree, and extra table columns remain available on request.
 
+Version 0.3.0 adds local Ollama catalog discovery, original GGUF blob inspection, aggregation of safetensors tensor blobs, and catalog-based comparison. Prompt settings and source metadata stay inside Model details. Packed tensor formats expose storage metadata with explicit numerical-decoding limits.
+
 Explicit boundaries keep results trustworthy: name hierarchy is not a recovered execution graph; stored-element counts are not unique trainable counts; sample matches are not exact equality. Unsupported numerical decoders produce clear explanations rather than fabricated values.
 
 ## Candidate next releases
