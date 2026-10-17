@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WeightScope · Icon alternatives</title>
+  <style>
+    :root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; color: #e6eaf2; background: #10151e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: clamp(24px, 5vw, 64px); }
+    main { max-width: 1180px; margin: auto; }
+    .eyebrow { color: #eab087; font: 11px/1.5 ui-monospace, monospace; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { font-size: clamp(28px, 4vw, 42px); font-weight: 550; letter-spacing: -.04em; margin: 10px 0; }
+    header p { margin: 0; max-width: 660px; color: #929fb1; }
+    .options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 36px 0; }
+    article { min-width: 0; border: 1px solid #2a3445; border-radius: 14px; background: #151c27; overflow: hidden; }
+    .hero { display: grid; place-items: center; padding: 28px; background: #10151e; }
+    .hero img { width: 100%; max-width: 256px; height: auto; display: block; }
+    .details { padding: 22px; }
+    .number { color: #7fc6b3; font: 11px ui-monospace, monospace; }
+    h2 { font-size: 20px; font-weight: 550; letter-spacing: -.02em; margin: 7px 0; }
+    article p { color: #929fb1; font-size: 13px; min-height: 60px; margin: 0 0 20px; }
+    .sizes { display: flex; gap: 18px; align-items: end; flex-wrap: wrap; }
+    figure { margin: 0; text-align: center; }
+    figure img { display: block; border-radius: 4px; }
+    figcaption { margin-top: 7px; color: #929fb1; font: 10px ui-monospace, monospace; }
+    a { color: #eab087; text-underline-offset: 4px; }
+    .download { display: inline-block; margin-top: 24px; font-size: 12px; }
+    footer { color: #929fb1; font-size: 12px; }
+    @media (max-width: 1000px) { .options { grid-template-columns: 1fr; } article { display: grid; grid-template-columns: minmax(200px, .8fr) 1fr; } article p { min-height: auto; } }
+    @media (max-width: 600px) { article { display: block; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">WeightScope / Visual exploration</div>
+    <h1>Three ways to see the weights.</h1>
+    <p>Icon concepts using WeightScope’s navy, peach, and mint palette. Compare the full mark with smaller sizes below.</p>
+  </header>
+  <section class="options" aria-label="Icon alternatives">
+    <article>
+      <div class="hero"><img src="01-matrix-lens.png" alt="Peach inspection lens enclosing four mint matrix cells" width="256" height="256"></div>
+      <div class="details">
+        <span class="number">01 / INSPECTION</span>
+        <h2>Matrix Lens</h2>
+        <p>A scope over a weight matrix. The clearest connection to inspecting model weights.</p>
+        <div class="sizes" aria-label="Matrix Lens size comparison">
+          <figure><img src="01-matrix-lens.png" alt="" width="128" height="128"><figcaption>128 px</figcaption></figure>
+          <figure><img src="01-matrix-lens.png" alt="" width="64" height="64"><figcaption>64 px</figcaption></figure>
+          <figure><img src="01-matrix-lens.png" alt="" width="32" height="32"><figcaption>32 px</figcaption></figure>
+        </div>
+        <a class="download" href="01-matrix-lens.png" download>Download PNG ↗</a>
+      </div>
+    </article>
+    <article>
+      <div class="hero"><img src="02-tensor-layers.png" alt="Three stacked diamond planes in mint and peach" width="256" height="256"></div>
+      <div class="details">
+        <span class="number">02 / STRUCTURE</span>
+        <h2>Tensor Layers</h2>
+        <p>A stack of model layers. Emphasizes the structure and depth inside a checkpoint.</p>
+        <div class="sizes" aria-label="Tensor Layers size comparison">
+          <figure><img src="02-tensor-layers.png" alt="" width="128" height="128"><figcaption>128 px</figcaption></figure>
+          <figure><img src="02-tensor-layers.png" alt="" width="64" height="64"><figcaption>64 px</figcaption></figure>
+          <figure><img src="02-tensor-layers.png" alt="" width="32" height="32"><figcaption>32 px</figcaption></figure>
+        </div>
+        <a class="download" href="02-tensor-layers.png" download>Download PNG ↗</a>
+      </div>
+    </article>
+    <article>
+      <div class="hero"><img src="03-weight-wave.png" alt="Five rounded bars forming a W rhythm with a mint center bar" width="256" height="256"></div>
+      <div class="details">
+        <span class="number">03 / DISTRIBUTION</span>
+        <h2>Weight Wave</h2>
+        <p>A compact W rhythm built from distribution bars. Closest to the extension’s current mark.</p>
+        <div class="sizes" aria-label="Weight Wave size comparison">
+          <figure><img src="03-weight-wave.png" alt="" width="128" height="128"><figcaption>128 px</figcaption></figure>
+          <figure><img src="03-weight-wave.png" alt="" width="64" height="64"><figcaption>64 px</figcaption></figure>
+          <figure><img src="03-weight-wave.png" alt="" width="32" height="32"><figcaption>32 px</figcaption></figure>
+        </div>
+        <a class="download" href="03-weight-wave.png" download>Download PNG ↗</a>
+      </div>
+    </article>
+  </section>
+  <footer>Generated with the built-in imagegen tool · 17 October 2026 · <a href="PROMPTS.md">Generation prompts</a></footer>
+</main>
+</body>
+</html>

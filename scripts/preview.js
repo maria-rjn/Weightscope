@@ -32,8 +32,8 @@ async function main() {
         res.setHeader('Content-Type', 'text/html'); res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WeightScope Preview</title><link rel="stylesheet" href="/styles.css"></head><body><div id="app"></div><script nonce="${nonce}">${mock}</script><script nonce="${nonce}" src="/model-view.js"></script><script nonce="${nonce}" src="/app.js"></script></body></html>`);
       } else if (req.method === 'GET' && route === '/favicon.ico') {
         res.writeHead(204); res.end();
-      } else if (req.method === 'GET' && ['/styles.css', '/model-view.js', '/app.js'].includes(route)) {
-        res.setHeader('Content-Type', route.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(await fs.readFile(path.join(__dirname, '..', 'media', route.slice(1))));
+      } else if (req.method === 'GET' && ['/styles.css', '/model-view.js', '/app.js', '/icon.png'].includes(route)) {
+        res.setHeader('Content-Type', route.endsWith('.png') ? 'image/png' : route.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(await fs.readFile(path.join(__dirname, '..', 'media', route.slice(1))));
       } else if (req.method === 'POST' && route === '/action') {
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 2 * 1024 * 1024) throw new Error('Request too large.'); }
         const m = JSON.parse(body), result = [], base = m.previewOllama ? ollamaModel : m.previewSharded ? shardedModel : model, comparison = m.previewOllama ? ollamaTarget : target;
