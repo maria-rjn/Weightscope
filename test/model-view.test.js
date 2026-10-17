@@ -59,3 +59,32 @@ test('focused diff filters preserve exhaustive search and order changed tensors 
   assert.deepEqual(view.diffRows(rows, { group: 'block.1', query: '.c' }).map(r => r.name), ['block.1.c']);
   assert.equal(view.diffRows(rows, { status: 'sample-match' })[0].name, 'block.2.e');
 });
+
+test('drift matrix aligns actual tensor suffixes, preserves collisions and keeps a global finite scale', () => {
+  const rows = [
+    { name: 'model.layers.10.self_attn.q_proj.weight', status: 'changed', metrics: { relativeL2: .4 } },
+    { name: 'model.layers.2.self_attn.q_proj.weight', status: 'sample-match', metrics: { relativeL2: 0 } },
+    { name: 'model.layers.2.norm.weight', status: 'equal', dtypeChanged: true, metrics: { relativeL2: null } },
+    { name: 'model/layers/2/norm/weight', status: 'unavailable' },
+    { name: 'bias', status: 'added' },
+    { name: 'encoder.weight', status: 'removed', metrics: { relativeL2: NaN } }
+  ];
+  const matrix = view.comparisonMatrix(rows);
+  assert.equal(matrix.maxRelativeL2, .4);
+  assert.ok(matrix.groups.findIndex(g => g.key === 'model.layers.2') < matrix.groups.findIndex(g => g.key === 'model.layers.10'));
+  assert.deepEqual(matrix.roles, ['bias', 'norm.weight', 'self_attn.q_proj.weight', 'weight']);
+  const layer = matrix.groups.find(g => g.key === 'model.layers.2');
+  assert.equal(layer.cells.get('norm.weight').length, 2);
+  assert.equal(layer.cells.get('self_attn.q_proj.weight')[0], rows[1]);
+  assert.equal(view.diffRows(rows, { status: '', group: 'model.layers.2', role: 'norm.weight' }).length, 2);
+  assert.equal(rows[2].status, 'equal');
+});
+
+test('drift matrix retains every group and role beyond either visible page', () => {
+  const rows = Array.from({ length: 135 }, (_, block) => Array.from({ length: 12 }, (_, role) => ({ name: `block.${block}.module.${role}.weight`, status: 'unverified' }))).flat();
+  const matrix = view.comparisonMatrix(rows);
+  assert.equal(matrix.groups.length, 135); assert.equal(matrix.roles.length, 12);
+  assert.equal(matrix.groups.at(-1).key, 'block.134'); assert.equal(matrix.roles.at(-1), 'module.11.weight');
+  assert.equal(matrix.groups.reduce((n, group) => n + [...group.cells.values()].reduce((m, cell) => m + cell.length, 0), 0), rows.length);
+  assert.deepEqual(view.comparisonMatrix([]), { groups: [], roles: [], maxRelativeL2: 0 });
+});

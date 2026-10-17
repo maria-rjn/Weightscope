@@ -1,4 +1,25 @@
 'use strict';
+function histogramDomain(...series) {
+  let min = Infinity, max = -Infinity;
+  for (const values of series) for (const value of values) if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); }
+  if (min === Infinity) return { min: null, max: null };
+  if (min === max) {
+    const padding = Math.abs(min) * .05 || .5;
+    if (Number.isFinite(min - padding)) min -= padding;
+    if (Number.isFinite(max + padding)) max += padding;
+  }
+  return { min, max };
+}
+function histogram(values, domain, count = 24) {
+  const bins = Array(count).fill(0);
+  if (domain.min == null || domain.max == null) return bins;
+  const range = domain.max - domain.min;
+  for (const value of values) if (Number.isFinite(value)) {
+    const position = Number.isFinite(range) ? (value - domain.min) / range : (value / 2 - domain.min / 2) / (domain.max / 2 - domain.min / 2);
+    bins[Math.max(0, Math.min(count - 1, Math.floor(position * count)))]++;
+  }
+  return bins;
+}
 function statistics(values, total, basis = 'Weight values') {
   let finite = 0, nan = 0, inf = 0, zero = 0, min = Infinity, max = -Infinity, mean = 0, m2 = 0, squareSum = 0;
   for (const v of values) {
@@ -8,12 +29,11 @@ function statistics(values, total, basis = 'Weight values') {
     min = Math.min(min, v); max = Math.max(max, v);
     const delta = v - mean; mean += delta / finite; m2 += delta * (v - mean); squareSum += v * v;
   }
-  const bins = Array(24).fill(0);
-  if (finite) for (const v of values) if (Number.isFinite(v)) bins[min === max ? 12 : Math.min(23, Math.floor((v - min) / (max - min) * 24))]++;
+  const histogramRange = histogramDomain(values), bins = histogram(values, histogramRange);
   return { total, sampled: values.length, exact: values.length === total, finite, nan, inf, zero,
     min: finite ? min : null, max: finite ? max : null, mean: finite ? mean : null,
     std: finite ? Math.sqrt(m2 / finite) : null, rms: finite ? Math.sqrt(squareSum / finite) : null,
-    zeroFraction: finite ? zero / finite : null, histogram: bins, basis };
+    zeroFraction: finite ? zero / finite : null, histogram: bins, histogramRange, basis };
 }
 function difference(a, b, total, tolerance = 0) {
   if (a.length !== b.length) throw new Error('Cannot compare different sample layouts.');
@@ -27,12 +47,14 @@ function difference(a, b, total, tolerance = 0) {
     normA += x ** 2; normB += y ** 2; dot += x * y;
   }
   const exact = a.length === total;
+  const domain = histogramDomain(a, b);
   return { total, sampled: a.length, exact, finite, nonFinite, nonFiniteMismatch, changedValues: changed, tolerance,
     status: changed || nonFiniteMismatch ? 'changed' : exact ? 'equal' : 'sample-match',
     meanAbs: finite ? absSum / finite : null, maxAbs: finite ? maxAbs : null,
     rmse: finite ? Math.sqrt(squareSum / finite) : null,
     relativeL2: normA > 0 ? Math.sqrt(squareSum / normA) : null,
-    cosine: normA > 0 && normB > 0 ? Math.max(-1, Math.min(1, dot / Math.sqrt(normA * normB))) : null };
+    cosine: normA > 0 && normB > 0 ? Math.max(-1, Math.min(1, dot / Math.sqrt(normA * normB))) : null,
+    distributions: { ...domain, baseline: histogram(a, domain), target: histogram(b, domain) } };
 }
 function structureDiff(base, target) {
   const shape = t => t.logicalShape || t.shape;

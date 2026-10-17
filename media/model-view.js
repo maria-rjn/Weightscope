@@ -41,10 +41,29 @@
     for (const g of grouped) g.status = g.rows.every(r => r.status === 'added') ? 'added' : g.rows.every(r => r.status === 'removed') ? 'removed' : g.changes ? 'changed' : g.unavailable ? 'unavailable' : g.pending ? 'unverified' : g.sampleMatches ? 'sample-match' : 'equal';
     return { counts, groups: grouped, analyzed, changes, pending, unavailable, total: rows.length };
   }
-  function diffRows(rows, { query = '', status = 'attention', group = '' } = {}) {
+  function tensorRole(name) {
+    const parts = name.split(/[./]/).filter(Boolean), key = groupKey(name);
+    return parts.slice(key === 'Ungrouped tensors' ? 0 : key.split('.').length).join('.') || name;
+  }
+  function comparisonMatrix(rows) {
+    const map = new Map(), roles = new Set();
+    let maxRelativeL2 = 0;
+    for (const row of rows) {
+      const key = groupKey(row.name), role = tensorRole(row.name);
+      if (!map.has(key)) map.set(key, { key, cells: new Map() });
+      const cells = map.get(key).cells;
+      if (!cells.has(role)) cells.set(role, []);
+      cells.get(role).push(row); roles.add(role);
+      if (Number.isFinite(row.metrics?.relativeL2)) maxRelativeL2 = Math.max(maxRelativeL2, row.metrics.relativeL2);
+    }
+    const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+    return { groups: [...map.values()].sort((a, b) => natural(a.key, b.key)), roles: [...roles].sort(natural), maxRelativeL2 };
+  }
+  function diffRows(rows, { query = '', status = 'attention', group = '', role = '' } = {}) {
     return rows.filter(r => r.name.toLowerCase().includes(query.toLowerCase()) && (!group || groupKey(r.name) === group)
+      && (!role || tensorRole(r.name) === role)
       && (!status || (status === 'attention' ? needsAttention(r) : r.status === status)))
       .sort((a, b) => Number(hasChange(b)) - Number(hasChange(a)) || (b.metrics?.maxAbs || 0) - (a.metrics?.maxAbs || 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   }
-  return { groupKey, groups, hasChange, needsAttention, diffOverview, diffRows };
+  return { groupKey, groups, tensorRole, comparisonMatrix, hasChange, needsAttention, diffOverview, diffRows };
 });

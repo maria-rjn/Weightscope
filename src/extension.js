@@ -115,7 +115,7 @@ function activate(context) {
           for (const row of candidates) {
             if (options.signal.aborted) throw new Error('Operation cancelled.');
             try { row.metrics = await backend.compareTensor(model, target, row.name, options); row.status = row.metrics.status; delete row.error; }
-            catch (e) { if (options.signal.aborted) throw e; row.status = 'unavailable'; row.error = e.message; }
+            catch (e) { if (options.signal.aborted) throw e; row.status = 'unavailable'; row.error = e.message; delete row.metrics; }
             post({ type: 'diffRow', row, completed: ++completed, total: candidates.length });
           }
           post({ type: 'diffDone', remaining: rows.filter(r => ['unverified', 'unavailable'].includes(r.status)).length });

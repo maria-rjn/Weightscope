@@ -3,13 +3,15 @@
 (() => {
   const vscode = acquireVsCodeApi(), view = WeightScopeView, root = document.getElementById('app'), saved = vscode.getState() || {}, PAGE = 40;
   const state = { tab: saved.tab || 'weights', query: saved.query || '', dtype: '', page: 0, groupPage: 0, group: '', selected: saved.selected || '',
-    stats: new Map(), rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffPage: 0, diffDetailsOpen: false,
+    stats: new Map(), rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffRole: '', diffPage: 0, diffDetailsOpen: false,
+    sizeMetric: saved.sizeMetric === 'bytes' ? 'bytes' : 'elements', mapPage: 0, rolePage: 0, mapQuery: '', chartObservers: [],
     busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
-  const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected });
+  const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected, sizeMetric: state.sizeMetric });
   const number = n => n == null ? '—' : new Intl.NumberFormat('en', { maximumSignificantDigits: 5 }).format(n);
   const integer = n => new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(n);
   const compact = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
+  const chartNumber = n => new Intl.NumberFormat('en', { maximumSignificantDigits: 3, notation: Math.abs(n) >= 10000 || (n !== 0 && Math.abs(n) < .001) ? 'scientific' : 'standard' }).format(n);
   const percent = fraction => fraction > 0 && fraction * 100 < .01 ? '<0.01%' : `${new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(fraction * 100)}%`;
   const bytes = n => { if (n == null) return 'Unknown'; if (!n) return '0 B'; const i = Math.min(4, Math.floor(Math.log(n) / Math.log(1024))); return `${number(n / 1024 ** i)} ${['B', 'KiB', 'MiB', 'GiB', 'TiB'][i]}`; };
   const shape = t => t.shape.length ? t.shape.join(' × ') : 'scalar';
@@ -25,15 +27,23 @@
   function brokenName(name, cls = 'detail-name') { const n = el('div', cls); for (const part of name.split(/([./])/)) { n.append(document.createTextNode(part)); if (part === '.' || part === '/') n.append(el('wbr')); } return n; }
   function badge(status) { return el('span', `status ${status}`, labels[status] || status); }
   function table(headers) { const wrap = el('div', 'table-wrap'), t = el('table'), head = el('thead'), row = el('tr'), body = el('tbody'); headers.forEach(h => row.append(el('th', '', h))); add(t, add(head, row), body); wrap.append(t); return { wrap, body }; }
-  function pager(parent, total, page, update, size = PAGE) {
+  function pager(parent, total, page, update, size = PAGE, label = '') {
     if (total <= size) return; const last = Math.ceil(total / size) - 1, n = el('div', 'pager');
-    const prev = button('← Previous', () => update(page - 1)); prev.disabled = !page;
-    const next = button('Next →', () => update(page + 1)); next.disabled = page >= last;
+    n.dataset.pageLabel = label;
+    function move(nextPage, direction) {
+      update(nextPage);
+      const replacement = [...parent.querySelectorAll('.pager')].find(p => p.dataset.pageLabel === label);
+      const choices = replacement?.querySelectorAll('button');
+      (choices?.[direction]?.disabled ? choices[1 - direction] : choices?.[direction])?.focus({ preventScroll: true });
+    }
+    const prev = button(`← Previous${label ? ` ${label}` : ''}`, () => move(page - 1, 0)); prev.disabled = !page;
+    const next = button(`Next${label ? ` ${label}` : ''} →`, () => move(page + 1, 1)); next.disabled = page >= last;
     parent.append(add(n, prev, el('span', '', `${page + 1} / ${last + 1}`), next));
   }
   function heading(title, description, actions) { return add(el('div', 'section-heading'), add(el('div'), el('h2', '', title), description && el('p', 'subtle', description)), actions); }
   function showError(message) { for (const id of ['error', ...(state.drawerOpen ? ['drawer-error'] : [])]) { const n = document.getElementById(id); if (n) { n.textContent = message; n.hidden = false; } } }
   function buildShell() {
+    state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = [];
     root.replaceChildren(); const shell = el('div', 'shell'), top = el('header', 'topbar'), brand = el('div', 'brand'), logo = el('span', 'logo');
     add(logo, el('i'), el('i'), el('i')); add(brand, logo, el('span', '', 'WeightScope'));
     const tools = el('details', 'tools-menu'); add(tools, el('summary', '', 'Tools'), add(el('div', 'tools-popover'), action('Open Ollama model', 'openOllama'), action('Compare Ollama model', 'compareOllama'), action('Refresh model', 'refresh'), action('Export JSON report', 'export'), action('PyTorch setup', 'setup')));
@@ -49,7 +59,12 @@
     const choices = [['weights', 'Explore'], ['compare', 'Compare'], ['info', 'Model details']]; if (m.format === 'onnx') choices.push(['operators', 'Operators']);
     for (const [id, title] of choices) { const b = button(title, () => { state.tab = id; persist(); renderTab(); }); b.dataset.tab = id; b.className = `tab${state.tab === id ? ' active' : ''}`; b.setAttribute('aria-pressed', String(state.tab === id)); tabs.append(b); }
     const content = el('main'); content.id = 'content'; add(shell, tabs, content, add(el('footer', 'footer'), el('span', '', 'Read only · Models stay on your machine'), el('span', '', 'Weight analysis runs when you request it')));
-    const drawer = el('dialog', 'drawer'); drawer.id = 'tensor-detail'; drawer.setAttribute('aria-labelledby', 'drawer-title'); drawer.addEventListener('close', () => { state.drawerOpen = false; });
+    const drawer = el('dialog', 'drawer'); drawer.id = 'tensor-detail'; drawer.setAttribute('aria-labelledby', 'drawer-title'); drawer.addEventListener('close', () => {
+      state.drawerOpen = false; state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = [];
+      const name = state.drawerMode === 'diff' ? state.selectedDiff : state.selected;
+      const replacement = [...root.querySelectorAll('[data-matrix-key], [data-tensor-row] button, .tensor-link')].find(b => b.dataset.matrixKey === name || b.closest('[data-tensor-row]')?.dataset.tensorRow === name || b.textContent === name);
+      (state.returnFocus?.isConnected ? state.returnFocus : replacement)?.focus({ preventScroll: true });
+    });
     drawer.addEventListener('click', e => { if (e.target === drawer && e.clientX < drawer.getBoundingClientRect().left) drawer.close(); });
     shell.append(drawer); root.append(shell); renderTab();
   }
@@ -79,14 +94,19 @@
     const parent = document.getElementById('weight-results'); if (!parent) return; parent.replaceChildren(); const group = state.groups.find(g => g.key === state.group);
     if (group) parent.append(add(el('div', 'breadcrumb'), button('All layer groups', () => { state.group = ''; state.page = 0; renderWeightResults(); }, 'text-button'), el('span', '', '/'), brokenName(group.key, 'crumb-current')));
     if (!state.query && !state.dtype && !group) {
-      const total = state.model.summary.parameters, max = state.groups.reduce((n, g) => Math.max(n, g.elements), 1), grid = el('div', 'layer-grid'); parent.append(el('p', 'map-hint', 'Size bars show stored value counts. Groups follow tensor names.'));
+      const storage = state.sizeMetric === 'bytes', value = g => storage && g.unknownBytes ? null : g[state.sizeMetric];
+      const max = state.groups.reduce((n, g) => Math.max(n, value(g) || 0), 1), list = el('div', 'layer-list');
+      parent.append(add(el('div', 'list-heading'), el('p', 'map-hint', 'Groups follow tensor names. Bars share one scale across all pages.'), select([['elements', 'Stored values'], ['bytes', 'Storage bytes']], state.sizeMetric, v => { state.sizeMetric = v; persist(); renderWeightResults(); }, 'Layer bar measure')));
       state.groupPage = Math.min(state.groupPage, Math.max(0, Math.ceil(state.groups.length / 24) - 1));
       for (const g of state.groups.slice(state.groupPage * 24, (state.groupPage + 1) * 24)) {
-        const card = button('', () => { state.group = g.key; state.page = 0; renderWeightResults(); }, 'layer-card'); const tensorLabel = `${g.tensors.length} tensor${g.tensors.length === 1 ? '' : 's'}`; card.setAttribute('aria-label', `Explore ${g.key}, ${tensorLabel}`);
-        const bar = el('div', 'size-bar'), fill = el('span'); fill.style.width = `${g.elements / max * 100}%`; bar.append(fill);
-        add(card, add(el('div', 'layer-card-top'), brokenName(g.key, 'group-name'), el('span', 'layer-arrow', '→')), el('div', 'layer-value', compact(g.elements)), el('div', 'subtle', `${tensorLabel} · ${g.dtypes.size === 1 ? [...g.dtypes][0] : g.dtypes.size + ' precision types'}`), bar, el('div', 'subtle', `${percent(total ? g.elements / total : 0)} of stored values`)); grid.append(card);
+        const row = button('', () => { state.group = g.key; state.page = 0; renderWeightResults(); }, 'layer-row');
+        const n = value(g), label = n == null ? 'Unknown storage' : storage ? bytes(n) : `${compact(n)} values`;
+        const tensorLabel = `${integer(g.tensors.length)} tensor${g.tensors.length === 1 ? '' : 's'}`;
+        row.setAttribute('aria-label', `Explore ${g.key}, ${tensorLabel}, ${label}`);
+        const bar = el('div', `size-bar${n == null ? ' unknown-size' : ''}`), fill = el('span'); fill.style.width = `${(n || 0) / max * 100}%`; bar.append(fill);
+        add(row, add(el('div', 'layer-label'), brokenName(g.key, 'group-name'), el('span', 'subtle', `${tensorLabel} · ${[...g.dtypes].join(', ')}`)), bar, el('span', 'layer-measure', label)); list.append(row);
       }
-      parent.append(grid); pager(parent, state.groups.length, state.groupPage, p => { state.groupPage = p; renderWeightResults(); }, 24); if (!state.groups.length) parent.append(el('div', 'empty', 'No supported stored tensors. See Model details for format notes.')); return;
+      parent.append(list); pager(parent, state.groups.length, state.groupPage, p => { state.groupPage = p; renderWeightResults(); }, 24); if (!state.groups.length) parent.append(el('div', 'empty', 'No supported stored tensors. See Model details for format notes.')); return;
     }
     const query = state.query.toLowerCase(), tensors = state.model.tensors.filter(t => t.name.toLowerCase().includes(query) && (!state.dtype || t.dtype === state.dtype) && (!group || view.groupKey(t.name) === group.key));
     parent.append(add(el('div', 'list-heading'), el('p', 'subtle', `${integer(tensors.length)} tensors · Select one to inspect it`), button(state.moreColumns ? 'Fewer columns' : 'More columns', () => { state.moreColumns = !state.moreColumns; renderWeightResults(); }, 'text-button')));
@@ -99,11 +119,47 @@
     }
     parent.append(wrap); pager(parent, tensors.length, state.page, p => { state.page = p; renderWeightResults(); });
   }
-  function selectTensor(name) { state.selected = name; state.drawerMode = 'tensor'; state.drawerOpen = true; persist(); renderDetail(); document.querySelectorAll('[data-tensor-row]').forEach(r => r.classList.toggle('selected', r.dataset.tensorRow === name)); }
-  function showDifference(name) { state.selectedDiff = name; state.drawerMode = 'diff'; state.drawerOpen = true; renderDetail(); }
+  function selectTensor(name) { state.returnFocus = document.activeElement; state.selected = name; state.drawerMode = 'tensor'; state.drawerOpen = true; persist(); renderDetail(); document.querySelectorAll('[data-tensor-row]').forEach(r => r.classList.toggle('selected', r.dataset.tensorRow === name)); }
+  function showDifference(name) { state.returnFocus = document.activeElement; state.selectedDiff = name; state.drawerMode = 'diff'; state.drawerOpen = true; renderDetail(); }
   function drawerHeader(parent, title, name) { const h = el('h2', '', title); h.id = 'drawer-title'; h.tabIndex = -1; add(parent, add(el('div', 'drawer-header'), h, button('Close', () => parent.close(), 'ghost')), brokenName(name)); const error = el('div', 'notice error'); error.id = 'drawer-error'; error.setAttribute('role', 'alert'); error.hidden = true; parent.append(error); }
   function tiles(items) { const n = el('div', 'metric-tiles'); for (const [label, value] of items) n.append(add(el('div'), el('div', 'subtle', label), el('div', 'metric-value', value))); return n; }
-  function renderDetail() { const parent = document.getElementById('tensor-detail'); if (!parent || !state.drawerOpen) return; const wasOpen = parent.open, hadFocus = parent.contains(document.activeElement); parent.replaceChildren(); if (state.drawerMode === 'diff') renderDiffDetail(parent); else renderTensorDetail(parent); if (!wasOpen && state.drawerOpen) parent.showModal(); else if (wasOpen && hadFocus) parent.querySelector('#drawer-title')?.focus({ preventScroll: true }); updateBusy(); }
+  function renderDetail() { const parent = document.getElementById('tensor-detail'); if (!parent || !state.drawerOpen) return; state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = []; const wasOpen = parent.open, hadFocus = parent.contains(document.activeElement); parent.replaceChildren(); if (state.drawerMode === 'diff') renderDiffDetail(parent); else renderTensorDetail(parent); if (!wasOpen && state.drawerOpen) parent.showModal(); else if (wasOpen && hadFocus) parent.querySelector('#drawer-title')?.focus({ preventScroll: true }); updateBusy(); }
+  function distributionChart(parent, domain, series) {
+    if (domain?.min == null || domain.max == null || !series.some(s => s.counts.some(Boolean))) { parent.append(el('p', 'subtle', 'No finite values available for a distribution.')); return; }
+    const chart = el('div', 'distribution-chart'), svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `${series.map(s => s.label).join(' and ')} distributions, using the same ${series[0].counts.length} bins from ${number(domain.min)} to ${number(domain.max)}. Height is percentage of finite analyzed values.`);
+    chart.append(svg); parent.append(chart);
+    const legend = el('div', 'distribution-legend');
+    for (const s of series) legend.append(add(el('span'), el('i', s.className), document.createTextNode(s.label)));
+    parent.append(legend);
+    const data = disclosure('Distribution bin counts'), { wrap, body } = table(['Value interval', ...series.map(s => s.label)]);
+    const boundary = i => domain.min * (1 - i / series[0].counts.length) + domain.max * (i / series[0].counts.length);
+    series[0].counts.forEach((_, i) => body.append(add(el('tr'), el('td', '', `${number(boundary(i))} to ${number(boundary(i + 1))}${i === series[0].counts.length - 1 ? ' (inclusive)' : ''}`), ...series.map(s => el('td', 'numeric', integer(s.counts[i]))))));
+    data.append(el('p', 'subtle', 'Intervals include the lower boundary; only the final interval includes its upper boundary. NaN and infinite values are excluded.'), wrap); parent.append(data);
+    function draw() {
+      const width = Math.max(220, chart.clientWidth), height = 205, left = 68, right = width - 12, top = 12, bottom = 157;
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.replaceChildren();
+      const node = (tag, attrs, text) => { const n = document.createElementNS(svg.namespaceURI, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text != null) n.textContent = text; svg.append(n); return n; };
+      const normalized = series.map(s => { const total = s.counts.reduce((a, b) => a + b, 0); return s.counts.map(n => total ? n / total * 100 : 0); });
+      const ceiling = Math.min(100, Math.max(1, ...normalized.flat()) * 1.1), y = n => bottom - n / ceiling * (bottom - top), binWidth = (right - left) / series[0].counts.length;
+      for (const tick of [0, ceiling / 2, ceiling]) { node('line', { x1: left, x2: right, y1: y(tick), y2: y(tick), class: 'chart-grid' }); node('text', { x: left - 7, y: y(tick) + 4, 'text-anchor': 'end' }, `${new Intl.NumberFormat('en', { maximumSignificantDigits: 3 }).format(tick)}%`); }
+      series.forEach((s, index) => {
+        if (index === 1) {
+          let path = '';
+          normalized[index].forEach((n, i) => { const x = left + i * binWidth; path += `${i ? 'L' : 'M'}${x},${y(n)}L${x + binWidth},${y(n)}`; });
+          node('path', { d: path, class: 'histogram-target' });
+        } else normalized[index].forEach((n, i) => {
+          const bar = node('rect', { x: left + i * binWidth + .5, y: y(n), width: Math.max(.5, binWidth - 1), height: bottom - y(n), class: s.className });
+          const title = document.createElementNS(svg.namespaceURI, 'title'); title.textContent = `${number(boundary(i))} to ${number(boundary(i + 1))}: ${integer(s.counts[i])} ${s.label.toLowerCase()} values`; bar.append(title);
+        });
+      });
+      const ticks = width > 340 ? [0, .5, 1] : [0, 1];
+      for (const fraction of ticks) node('text', { x: left + (right - left) * fraction, y: bottom + 20, 'text-anchor': fraction === 0 ? 'start' : fraction === 1 ? 'end' : 'middle' }, chartNumber(domain.min * (1 - fraction) + domain.max * fraction));
+      node('text', { x: (left + right) / 2, y: 200, 'text-anchor': 'middle' }, 'Value');
+      node('text', { transform: `translate(12 ${(top + bottom) / 2}) rotate(-90)`, 'text-anchor': 'middle' }, 'Finite values (%)');
+    }
+    const observer = new ResizeObserver(draw); observer.observe(chart); state.chartObservers.push(observer); draw();
+  }
   function renderTensorDetail(parent) {
     const t = state.model.tensors.find(t => t.name === state.selected); if (!t) { state.drawerOpen = false; if (parent.open) parent.close(); return; }
     const decoded = t.logicalShape != null;
@@ -111,8 +167,8 @@
     if (t.analysisUnavailable) parent.append(add(el('div', 'analyze-prompt'), el('h3', '', 'Storage metadata available'), el('p', 'subtle', t.analysisUnavailable)));
     else if (!data) parent.append(add(el('div', 'analyze-prompt'), el('div', 'eyebrow', 'WEIGHT HEALTH'), el('h3', '', 'Check the values inside this tensor.'), el('p', 'subtle', 'See the distribution, range, and whether any values are NaN or infinite.'), action('Analyze weights', 'stats', { name: t.name }, 'primary full'), el('p', 'subtle', `Up to ${integer(state.settings.sampleSize)} values will be checked. Small tensors are checked in full.`)));
     else {
-      add(parent, el('h3', '', 'Weight distribution'), el('p', 'subtle', `${data.exact ? 'Full tensor' : 'Sampled estimate'} · ${integer(data.sampled)} / ${integer(data.total)} values`)); const histogram = el('div', 'histogram'); histogram.setAttribute('role', 'img'); histogram.setAttribute('aria-label', `Weight distribution: ${data.histogram.join(', ')} values per bin`); const max = Math.max(1, ...data.histogram);
-      data.histogram.forEach((count, i) => { const bin = el('span'); bin.style.height = `${count / max * 100}%`; bin.title = `Bin ${i + 1}: ${count} values`; histogram.append(bin); }); add(parent, histogram, add(el('div', 'histogram-labels'), el('span', '', number(data.min)), el('span', '', number(data.max))));
+      add(parent, el('h3', '', 'Weight distribution'), el('p', 'subtle', `${data.exact ? 'Full tensor' : 'Sampled estimate'} · ${integer(data.sampled)} / ${integer(data.total)} values`));
+      distributionChart(parent, data.histogramRange || data, [{ label: 'Weights', counts: data.histogram, className: 'histogram-baseline' }]);
       const message = data.nan || data.inf ? `${integer(data.nan + data.inf)} NaN or infinite values found in the analyzed values.` : data.sampled ? `No NaN or infinite values found ${data.exact ? 'in this tensor' : 'in this sample'}.` : 'This tensor is empty.';
       const health = el('div', `health${data.nan || data.inf ? ' warning' : ''}`, message); health.setAttribute('role', 'status');
       add(parent, health, tiles([['Minimum', number(data.min)], ['Maximum', number(data.max)], ['Mean', number(data.mean)], ['Standard deviation', number(data.std)]]), disclosure('More statistics & sampling details', pairs([['RMS', number(data.rms)], ['Zeros among finite values', data.zeroFraction == null ? '—' : `${number(data.zeroFraction * 100)}%`], ['NaN values', integer(data.nan)], ['Infinite values', integer(data.inf)], ['Finite values analyzed', integer(data.finite)]]), el('p', 'subtle', `${data.basis}. ${data.exact ? 'Standard deviation uses the full population.' : 'Samples use evenly spaced windows. Values outside the sample can contain outliers or invalid values.'}`)), action('Analyze again', 'stats', { name: t.name }, 'full'));
@@ -126,6 +182,7 @@
     drawerHeader(parent, 'Tensor difference', row.name); add(parent, badge(row.status), pairs([['Baseline', row.left ? `${row.left.dtype} · ${shape(row.left)}` : 'Not present'], ['Target', row.right ? `${row.right.dtype} · ${shape(row.right)}` : 'Not present']])); if (row.dtypeChanged) parent.append(el('p', 'subtle', 'The stored precision changed between checkpoints.')); const m = row.metrics;
     if (m) add(parent, el('h3', '', 'How much did it change?'), el('p', 'subtle', `${m.exact ? 'Full comparison' : 'Sampled comparison'} · ${integer(m.sampled)} / ${integer(m.total)} values`), tiles([['Mean absolute change', number(m.meanAbs)], ['Largest absolute change', number(m.maxAbs)], ['RMSE', number(m.rmse)], ['Cosine similarity', number(m.cosine)]]), disclosure('More comparison details', pairs([['Relative L2', number(m.relativeL2)], ['Changed values', integer(m.changedValues)], ['Non-finite pairs', integer(m.nonFinite)], ['Non-finite mismatches', integer(m.nonFiniteMismatch)], ['Absolute tolerance', number(m.tolerance)]]), el('p', 'subtle', 'Full match means all values agree within tolerance. Sample matches only describe the positions analyzed. Relative L2 and cosine are undefined for zero norms.')));
     else { const descriptions = { added: 'This tensor is present only in the target checkpoint.', removed: 'This tensor is present only in the baseline checkpoint.', 'shape-changed': 'The shape changed. Corresponding values cannot be compared directly.', 'basis-changed': 'These tensors use different numeric units, so a direct numerical delta would be misleading.' }; parent.append(el('p', 'subtle', descriptions[row.status] || 'Compare corresponding weight values to measure the difference.')); }
+    if (m?.distributions) { parent.append(el('h3', '', 'Baseline & target distributions'), el('p', 'subtle', 'Shared bin boundaries and scale. Baseline is filled; target is a line.')); distributionChart(parent, m.distributions, [{ label: 'Baseline', counts: m.distributions.baseline, className: 'histogram-baseline' }, { label: 'Target', counts: m.distributions.target, className: 'histogram-target' }]); }
     if (row.error) parent.append(el('div', 'notice error', row.error)); if (!['added', 'removed', 'shape-changed', 'basis-changed'].includes(row.status)) parent.append(action(m ? 'Analyze again' : 'Analyze this tensor', 'analyzeDiff', { name: row.name }, 'primary full'));
   }
   function renderComparison(content) {
@@ -133,8 +190,9 @@
     if (!state.target) { add(pane, heading('See what changed', 'Compare this model with another checkpoint.'), add(el('div', 'compare-start'), add(el('div', 'compare-step'), el('span', 'step-number', '1'), el('div', 'eyebrow', 'BASELINE'), el('h3', '', state.model.name), el('p', 'subtle', 'The model you have open')), el('span', 'step-arrow', '→'), add(el('div', 'compare-step target-step'), el('span', 'step-number', '2'), el('div', 'eyebrow', 'TARGET'), el('h3', '', 'Choose another checkpoint'), el('p', 'subtle', 'Find added, removed, and changed weights'), action('Choose target checkpoint', 'compare', {}, 'primary'), action('Choose Ollama model', 'compareOllama', {}, 'ghost')))); content.append(pane); return; }
     const overview = view.diffOverview(state.rows);
     const analyze = action(overview.analyzed ? 'Analyze next batch' : 'Analyze weight changes', 'analyzeDiff', {}, 'primary'); analyze.id = 'analyze-comparison';
-    add(pane, heading('Checkpoint comparison', 'Start with the change map. Open a group for tensor-by-tensor results.', add(el('div', 'actions'), action('Change target', 'compare', {}, 'ghost'), analyze)), add(el('div', 'compare-files'), el('span', '', state.model.name), el('span', 'file-arrow', '→'), el('span', '', state.target.name)));
-    const summary = el('div'); summary.id = 'diff-summary'; const map = el('div'); map.id = 'change-map'; add(pane, summary, map);
+    add(pane, heading('Checkpoint comparison', 'Compare drift across layer groups and tensor roles. Select a cell to inspect it.', add(el('div', 'actions'), action('Change target', 'compare', {}, 'ghost'), analyze)), add(el('div', 'compare-files'), el('span', '', state.model.name), el('span', 'file-arrow', '→'), el('span', '', state.target.name)));
+    const summary = el('div'); summary.id = 'diff-summary'; const map = el('div'); map.id = 'change-map';
+    add(pane, summary, add(el('div', 'toolbar map-toolbar'), input('Find a layer or tensor role…', state.mapQuery, v => { state.mapQuery = v; state.mapPage = 0; state.rolePage = 0; renderDiffOverview(); })), map);
     const detail = el('details', 'diff-disclosure'); detail.id = 'diff-detail-list'; detail.open = state.diffDetailsOpen; detail.addEventListener('toggle', () => { state.diffDetailsOpen = detail.open; }); detail.append(el('summary', '', 'Tensor-by-tensor results'));
     const toolbar = el('div', 'toolbar'); add(toolbar, input('Search differences…', state.diffQuery, v => { state.diffQuery = v; state.diffPage = 0; renderDiffResults(); }), select([['attention', 'Changes & not analyzed'], ['', 'All tensors'], ...Object.entries(labels)], state.diffFilter, v => { state.diffFilter = v; state.diffPage = 0; renderDiffResults(); }, 'Filter comparison status')); const results = el('div'); results.id = 'diff-results'; add(detail, toolbar, results);
     add(pane, detail, disclosure('How comparison works', el('p', 'subtle', `Names are matched exactly. Each batch compares up to ${integer(state.settings.maxDiffTensors)} compatible tensors, with absolute tolerance ${number(state.settings.absoluteTolerance)}. Changes are target minus baseline. Sample matches do not prove that the whole tensor is unchanged.`))); content.append(pane); renderDiffOverview(); renderDiffResults();
@@ -142,21 +200,67 @@
   function renderComparisonTab() { const n = document.getElementById('content'); if (n) { n.replaceChildren(); renderComparison(n); } }
   function revealDiffResults() { const n = document.getElementById('diff-detail-list'); if (!n) return; n.querySelector('summary')?.focus({ preventScroll: true }); n.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
   function renderDiffOverview() {
-    const summary = document.getElementById('diff-summary'), map = document.getElementById('change-map'); if (!summary || !map) return; summary.replaceChildren(); map.replaceChildren(); const d = view.diffOverview(state.rows);
+    const summary = document.getElementById('diff-summary'), map = document.getElementById('change-map'); if (!summary || !map) return;
+    const focusedKey = map.contains(document.activeElement) ? document.activeElement.dataset.matrixKey : null;
+    summary.replaceChildren(); map.replaceChildren(); const d = view.diffOverview(state.rows);
     const analyze = document.getElementById('analyze-comparison');
     if (analyze) { analyze.textContent = d.pending ? d.analyzed ? 'Analyze next batch' : 'Analyze weight changes' : d.unavailable ? 'Retry unavailable' : d.analyzed ? 'Analysis complete' : 'No comparable tensors'; analyze.dataset.inactive = String(!d.pending && !d.unavailable); analyze.disabled = state.busy || analyze.dataset.inactive === 'true'; }
     const title = d.changes ? `${d.changes} tensors have changes` : d.pending ? 'Ready to compare weight values' : d.unavailable ? 'Some tensors could not be analyzed' : d.counts['sample-match'] ? 'No changes found in analyzed values' : 'All tensors match within tolerance';
     summary.append(add(el('div', 'diff-headline'), el('h3', '', title), el('p', 'subtle', `${d.analyzed} numerically analyzed · ${d.pending} not analyzed${d.unavailable ? ` · ${d.unavailable} unavailable` : ''}`)));
     const strip = el('div', 'status-strip'); strip.setAttribute('role', 'img'); strip.setAttribute('aria-label', Object.entries(d.counts).map(([s, count]) => `${count} ${labels[s]}`).join(', ')); const legend = el('div', 'status-legend');
-    for (const [status, count] of Object.entries(d.counts)) { const segment = el('span', status); segment.style.flexGrow = count; strip.append(segment); const b = button('', () => { state.diffFilter = status; state.diffPage = 0; state.diffDetailsOpen = true; renderComparisonTab(); revealDiffResults(); }, 'legend-button'); add(b, el('i', `legend-dot ${status}`), document.createTextNode(`${count} ${labels[status]}`)); legend.append(b); } add(summary, strip, legend);
-    map.append(el('p', 'map-hint', 'Change map · Select a group to inspect it. Counts include structural and precision changes.')); const grid = el('div', 'change-grid');
-    for (const g of d.groups.slice(0, 120)) { const text = g.status === 'added' ? `${g.rows.length} added` : g.status === 'removed' ? `${g.rows.length} removed` : g.changes ? `${g.changes} changed` : g.unavailable ? `${g.unavailable} unavailable` : g.pending ? `${g.pending} not analyzed` : g.sampleMatches ? 'Sample matches' : 'Full match'; const b = button('', () => { state.diffGroup = g.key; state.diffFilter = 'attention'; state.diffPage = 0; state.diffDetailsOpen = true; renderComparisonTab(); revealDiffResults(); }, `change-cell ${g.status}${state.diffGroup === g.key ? ' active' : ''}`); b.setAttribute('aria-label', `Inspect ${g.key}: ${text}`); add(b, brokenName(g.key, 'group-name'), el('div', 'change-count', text), el('div', 'subtle', `${g.rows.length} tensor${g.rows.length === 1 ? '' : 's'}${g.maxAbs != null && g.changes ? ` · max |Δ| ${number(g.maxAbs)}` : ''}`)); grid.append(b); }
-    map.append(grid); if (d.groups.length > 120) map.append(el('p', 'subtle', 'Showing the first 120 groups. Search tensor results to inspect every group.'));
+    for (const [status, count] of Object.entries(d.counts)) { const segment = el('span', status); segment.style.flexGrow = count; strip.append(segment); const b = button('', () => { state.diffGroup = ''; state.diffRole = ''; state.diffQuery = ''; state.diffFilter = status; state.diffPage = 0; state.diffDetailsOpen = true; renderComparisonTab(); revealDiffResults(); }, 'legend-button'); add(b, el('i', `legend-dot ${status}`), document.createTextNode(`${count} ${labels[status]}`)); legend.append(b); } add(summary, strip, legend);
+    renderChangeMap(map);
+    if (focusedKey) [...map.querySelectorAll('[data-matrix-key]')].find(b => b.dataset.matrixKey === focusedKey)?.focus({ preventScroll: true });
+  }
+  function renderChangeMap(parent) {
+    const all = view.comparisonMatrix(state.rows), query = state.mapQuery.toLowerCase();
+    const matrix = query ? view.comparisonMatrix(state.rows.filter(r => r.name.toLowerCase().includes(query))) : all;
+    const rowSize = 24, columnSize = 10;
+    state.mapPage = Math.min(state.mapPage, Math.max(0, Math.ceil(matrix.groups.length / rowSize) - 1));
+    state.rolePage = Math.min(state.rolePage, Math.max(0, Math.ceil(matrix.roles.length / columnSize) - 1));
+    parent.append(el('h3', '', 'Layer drift map'), el('p', 'map-hint', `${integer(matrix.groups.length)} layer groups × ${integer(matrix.roles.length)} tensor roles · Shared relative L2 scale across all pages and filters.`));
+    if (!matrix.groups.length) { parent.append(el('p', 'empty', 'No tensors match the map search.')); return; }
+    const roles = matrix.roles.slice(state.rolePage * columnSize, (state.rolePage + 1) * columnSize);
+    const wrap = el('div', 'table-wrap heatmap-wrap'), t = el('table', 'heatmap'), head = el('tr'), body = el('tbody');
+    t.style.setProperty('--roles', roles.length);
+    t.setAttribute('aria-label', 'Relative L2 checkpoint drift by tensor name group and role');
+    const corner = el('th', '', 'Layer group / tensor role'); corner.scope = 'col'; head.append(corner);
+    for (const role of roles) { const th = el('th'); th.append(brokenName(role.replace(/\.weight$/, ''), 'role-name')); th.scope = 'col'; th.title = role; th.setAttribute('aria-label', role); head.append(th); }
+    add(t, add(el('thead'), head), body); wrap.append(t); parent.append(wrap);
+    const openRows = (group, role = '') => { state.diffGroup = group; state.diffRole = role; state.diffFilter = ''; state.diffQuery = ''; state.diffPage = 0; state.diffDetailsOpen = true; renderComparisonTab(); revealDiffResults(); };
+    const codes = { unverified: '…', unavailable: '×', added: '+', removed: '−', 'shape-changed': 'S', 'basis-changed': 'U' };
+    for (const group of matrix.groups.slice(state.mapPage * rowSize, (state.mapPage + 1) * rowSize)) {
+      const tr = el('tr'), label = el('th'); label.scope = 'row'; label.append(button(group.key, () => openRows(group.key), 'tensor-link')); tr.append(label);
+      for (const role of roles) {
+        const td = el('td'), rows = group.cells.get(role);
+        if (!rows) td.append(el('span', 'missing-cell', '—'));
+        else {
+          const row = rows[0], m = rows.length === 1 ? row.metrics : null, relative = m && Number.isFinite(m.relativeL2) ? m.relativeL2 : null;
+          const status = rows.length > 1 ? 'mixed' : row.status;
+          const cell = button('', () => rows.length === 1 ? showDifference(row.name) : openRows(group.key, role), `heatmap-cell ${status}`);
+          cell.dataset.matrixKey = rows.map(r => r.name).join('\n');
+          const main = rows.length > 1 ? `${rows.length} tensors` : m ? relative == null ? 'n/a' : percent(relative) : codes[status] || '—';
+          const note = rows.length > 1 ? 'Select to list' : m ? `${m.exact ? 'Full' : 'Sample'}${row.dtypeChanged ? ' · P' : ''}${m.nonFiniteMismatch ? ' · !' : ''}` : `${labels[status]}${row.dtypeChanged ? ' · P' : ''}`;
+          add(cell, el('span', 'heatmap-value', main), el('span', 'heatmap-note', note));
+          if (relative != null) cell.style.setProperty('--heat', all.maxRelativeL2 ? String(relative / all.maxRelativeL2 * .65) : '0');
+          const description = rows.length > 1 ? `${group.key}, ${role}, ${rows.length} tensors` : `${row.name}: ${labels[row.status]}${row.dtypeChanged ? ', precision changed' : ''}${m ? `, ${relative == null ? 'relative L2 undefined for zero baseline norm or non-finite arithmetic' : `${percent(relative)} relative L2`}, ${m.exact ? 'full comparison' : 'sampled estimate'}, ${integer(m.sampled)} of ${integer(m.total)} values${m.nonFiniteMismatch ? `, ${integer(m.nonFiniteMismatch)} non-finite mismatches` : ''}` : ''}${row.error ? `. ${row.error}` : ''}`;
+          cell.title = description; cell.setAttribute('aria-label', description); td.append(cell);
+        }
+        tr.append(td);
+      }
+      body.append(tr);
+    }
+    const legend = el('div', 'heatmap-legend');
+    if (all.maxRelativeL2) add(legend, el('span', '', 'Relative L2'), el('span', '', '0%'), el('i', 'heatmap-ramp'), el('span', '', percent(all.maxRelativeL2)));
+    add(legend, el('span', '', '… Not analyzed'), el('span', '', '× Unavailable'), el('span', '', '+ Added'), el('span', '', '− Removed'), el('span', '', 'S Shape changed'), el('span', '', 'U Units differ'), el('span', '', 'P Precision changed'), el('span', '', '! Non-finite mismatch'), el('span', '', '— No tensor')); parent.append(legend);
+    parent.append(el('p', 'subtle', 'Intensity shows the amount of drift, not a health score. Relative L2 is undefined for a zero baseline norm. Full matches use the configured tolerance; sample matches do not prove whole-tensor equality.'));
+    pager(parent, matrix.groups.length, state.mapPage, p => { state.mapPage = p; renderDiffOverview(); }, rowSize, 'groups');
+    pager(parent, matrix.roles.length, state.rolePage, p => { state.rolePage = p; renderDiffOverview(); }, columnSize, 'roles');
   }
   function renderDiffResults() {
-    const parent = document.getElementById('diff-results'); if (!parent) return; parent.replaceChildren(); if (state.diffGroup) parent.append(add(el('div', 'breadcrumb'), button('All groups', () => { state.diffGroup = ''; state.diffPage = 0; renderDiffResults(); renderDiffOverview(); }, 'text-button'), el('span', '', '/'), brokenName(state.diffGroup, 'crumb-current')));
-    const rows = view.diffRows(state.rows, { query: state.diffQuery, status: state.diffFilter, group: state.diffGroup }); state.diffPage = Math.min(state.diffPage, Math.max(0, Math.ceil(rows.length / PAGE) - 1));
-    if (!rows.length) { parent.append(add(el('div', 'empty'), el('p', '', 'No tensors match this view.'), button('Show all tensors', () => { state.diffGroup = ''; state.diffFilter = ''; state.diffQuery = ''; renderComparisonTab(); }, 'ghost'))); return; }
+    const parent = document.getElementById('diff-results'); if (!parent) return; parent.replaceChildren(); if (state.diffGroup) parent.append(add(el('div', 'breadcrumb'), button('All groups', () => { state.diffGroup = ''; state.diffRole = ''; state.diffPage = 0; renderDiffResults(); renderDiffOverview(); }, 'text-button'), el('span', '', '/'), brokenName(`${state.diffGroup}${state.diffRole ? ` / ${state.diffRole}` : ''}`, 'crumb-current')));
+    const rows = view.diffRows(state.rows, { query: state.diffQuery, status: state.diffFilter, group: state.diffGroup, role: state.diffRole }); state.diffPage = Math.min(state.diffPage, Math.max(0, Math.ceil(rows.length / PAGE) - 1));
+    if (!rows.length) { parent.append(add(el('div', 'empty'), el('p', '', 'No tensors match this view.'), button('Show all tensors', () => { state.diffGroup = ''; state.diffRole = ''; state.diffFilter = ''; state.diffQuery = ''; renderComparisonTab(); }, 'ghost'))); return; }
     const { wrap, body } = table(['Tensor', 'Result', 'Mean |Δ|', 'Max |Δ|']);
     for (const row of rows.slice(state.diffPage * PAGE, (state.diffPage + 1) * PAGE)) { const n = el('tr'), result = el('td'); result.append(badge(row.status)); if (row.dtypeChanged) result.append(el('span', 'precision-change', 'Precision changed')); add(n, add(el('td', 'name-cell'), button(row.name, () => showDifference(row.name), 'tensor-link')), result, el('td', 'numeric', number(row.metrics?.meanAbs)), el('td', 'numeric', number(row.metrics?.maxAbs))); body.append(n); }
     add(parent, wrap, el('p', 'subtle', 'Select a tensor for shapes, precision, sampling coverage, RMSE, and other comparison metrics.')); pager(parent, rows.length, state.diffPage, p => { state.diffPage = p; renderDiffResults(); });
@@ -185,11 +289,11 @@
   }
   window.addEventListener('message', event => {
     const m = event.data;
-    if (m.type === 'model') { state.model = m.model; state.groups = view.groups(m.model.tensors); state.settings = m.settings; state.stats.clear(); state.rows = []; state.target = null; state.group = ''; state.page = 0; state.groupPage = 0; state.drawerOpen = false; buildShell(); }
+    if (m.type === 'model') { clearTimeout(state.diffTimer); state.diffTimer = null; state.model = m.model; state.groups = view.groups(m.model.tensors); state.settings = m.settings; state.stats.clear(); state.rows = []; state.target = null; state.group = ''; state.page = 0; state.groupPage = 0; state.drawerOpen = false; buildShell(); }
     else if (m.type === 'statistics') { state.stats.set(m.name, m.data); if (state.drawerMode === 'tensor' && state.selected === m.name) renderDetail(); }
-    else if (m.type === 'comparison') { document.getElementById('tensor-detail')?.close(); state.drawerOpen = false; state.target = m.target; state.rows = m.rows; state.tab = 'compare'; state.diffPage = 0; state.diffGroup = ''; state.diffFilter = 'attention'; state.diffDetailsOpen = false; persist(); renderTab(); }
+    else if (m.type === 'comparison') { clearTimeout(state.diffTimer); state.diffTimer = null; document.getElementById('tensor-detail')?.close(); state.drawerOpen = false; state.target = m.target; state.rows = m.rows; state.tab = 'compare'; state.diffPage = 0; state.diffGroup = ''; state.diffRole = ''; state.mapQuery = ''; state.mapPage = 0; state.rolePage = 0; state.diffFilter = 'attention'; state.diffDetailsOpen = false; persist(); renderTab(); }
     else if (m.type === 'diffRow') { const index = state.rows.findIndex(r => r.name === m.row.name); if (index >= 0) state.rows[index] = m.row; state.busyLabel = `Comparing tensor ${m.completed} / ${m.total}…`; updateBusy(); if (state.drawerMode === 'diff' && state.selectedDiff === m.row.name) renderDetail(); if (!state.diffTimer) state.diffTimer = setTimeout(() => { state.diffTimer = null; renderDiffOverview(); renderDiffResults(); }, 150); }
-    else if (m.type === 'diffDone') { renderDiffOverview(); renderDiffResults(); }
+    else if (m.type === 'diffDone') { clearTimeout(state.diffTimer); state.diffTimer = null; renderDiffOverview(); renderDiffResults(); }
     else if (m.type === 'busy') { state.busy = true; state.busyLabel = m.label; for (const id of ['error', 'drawer-error']) { const n = document.getElementById(id); if (n) n.hidden = true; } updateBusy(); }
     else if (m.type === 'idle') { state.busy = false; updateBusy(); }
     else if (m.type === 'error') showError(m.message);

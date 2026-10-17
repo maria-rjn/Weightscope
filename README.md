@@ -4,9 +4,9 @@ A local, read-only VS Code extension for inspecting model checkpoints and answer
 
 Open `.safetensors`, `.gguf`, `.onnx`, `.pt`, or `.pth` files, or select a downloaded Ollama model from its local catalog. Explore a layer tree, shapes, stored parameter counts, dtype distribution, quantization metadata, tensor statistics, and checkpoint differences. Inspection and analysis run on demand. There are no uploads, network requests, or telemetry in the extension.
 
-![Model overview with layer groups and size bars](docs/images/overview.png)
+![Model overview with aligned layer size bars](docs/images/layer-overview.jpg)
 
-![Checkpoint comparison with a map of changed layers](docs/images/checkpoint-diff.png)
+![Checkpoint comparison with a layer-by-tensor-role drift heatmap](docs/images/layer-drift-map.jpg)
 
 ## Install
 
@@ -18,10 +18,14 @@ If another extension owns these file types, use **Reopen Editor With… → Weig
 
 ## A simple first workflow
 
-1. Open a checkpoint. **Explore** shows clickable layer groups with size bars.
+1. Open a checkpoint. **Explore** shows aligned, clickable layer rows. Switch between **Stored values** and **Storage bytes**; bars share a scale across all pages. Unknown storage sizes remain explicitly unknown.
 2. Select a group, then a tensor. Its details open in a focused drawer.
-3. Click **Analyze weights** to see the distribution and health check. Advanced statistics stay under **More statistics & sampling details**.
-4. Use **Compare checkpoint** to choose a target, then **Analyze weight changes**. A change map shows where differences are concentrated; select a group for individual results.
+3. Click **Analyze weights** to see a labeled distribution and health check. **Distribution bin counts** exposes the values without hovering; advanced statistics stay under **More statistics & sampling details**.
+4. Use **Compare checkpoint** to choose a target, then **Analyze weight changes**. The **Layer drift map** aligns layer groups against actual tensor-name suffixes. Select a cell for its tensor difference, or a row label for all tensors in that group. Search the map and page through groups and roles to inspect large models.
+
+The map colors finite **relative L2 change** (`||target − baseline|| / ||baseline||`) on a shared linear scale across every page and filter. Intensity measures drift, not health. Cells distinguish full and sampled comparisons, uncomputed and unavailable analysis, precision changes, and structural changes; missing cells mean no tensor in that group/role. A zero baseline norm shows **n/a**, not zero drift. If normalized names collide, the cell opens a list of every matching tensor.
+
+The tensor difference drawer overlays baseline bars and a target line with identical bin boundaries and a common vertical scale (percentage of finite analyzed values). It uses the existing bounded samples; no extra weight reads or background scans are needed. NaN/Inf diagnostics remain separate. JSON reports include the histogram bounds and both series.
 
 **Browse tree** opens the tensor name hierarchy. **More columns** reveals exact values and storage bytes. **Tools** contains refresh, JSON export, and Python setup. **Model details** holds full metadata and precision distribution.
 
@@ -37,7 +41,7 @@ Run **WeightScope: Compare Ollama Models** to select a baseline and target from 
 
 GGUF numerical analysis uses the supported decoders listed below. Ollama MXFP8 safetensors weights support numerical analysis and checkpoint comparison: four E4M3FN values are unpacked from each U32 word and multiplied by their companion E8M0 scale, shared across 32 weights. Decoded values use float32 rounding, including signed zeros, NaNs, overflow, and underflow. The tensor inspector shows the logical shape and weight count alongside a separate stored-layout disclosure. Model totals, size bars, and tensor tables continue to describe stored entries, including scale codes; they are not unique trainable parameter counts. Other packed schemes (including FP4), missing scales, and incompatible MXFP8 layouts expose metadata with an explicit numerical-decoding explanation. Missing/corrupt downloads, unsupported blobs, and cloud-only entries show explanations. Text/configuration previews are limited to 64 KiB. JSON reports can include local prompts and settings; review them before sharing. Export cannot overwrite the selected manifests or their weight/configuration blobs.
 
-Layer groups follow the first numbered module in tensor names, or the enclosing named module when there is no numbered block. Bars describe stored value counts; they do not infer execution order. Both the optional tree and search retain access to individual tensors.
+Layer groups follow the first numbered module in tensor names, or the enclosing named module when there is no numbered block. Bars describe stored value counts or storage bytes; they do not infer execution order. Both the optional tree and search retain access to individual tensors.
 
 ## What you can do
 
