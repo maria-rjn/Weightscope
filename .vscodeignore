@@ -1,4 +1,5 @@
 .vscode/**
+.claude/**
 .test-runtime/**
 node_modules/**
 test/**

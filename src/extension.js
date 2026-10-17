@@ -66,6 +66,7 @@ function activate(context) {
     },
     resolveCustomEditor(document, panel) {
       const key = document.uri.toString(), uri = document.uri;
+      panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png');
       panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
       let model, target, rows = [], matching, stats = new Map(), busy = false, operation, disposed = false, ready = false;
       const post = data => { if (!disposed) panel.webview.postMessage(data); };

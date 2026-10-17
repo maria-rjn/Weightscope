@@ -23,8 +23,7 @@ input, select { color: var(--fg); border: 1px solid var(--border); border-radius
 .shell { max-width: 1440px; margin: auto; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 26px; border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; letter-spacing: -.3px; }
-.logo { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; gap: 3px; background: #eab08715; border: 1px solid #eab08740; border-radius: 7px; }
-.logo i { width: 3px; background: var(--accent); border-radius: 2px; height: 12px; }.logo i:nth-child(2) { height: 19px; }.logo i:nth-child(3) { height: 15px; }
+.logo { width: 32px; height: 32px; flex: 0 0 auto; background: url('icon.png') center / contain no-repeat; border-radius: 6px; }
 .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .local-label { color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 7px; margin-right: 9px; }
 .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--mint); display: inline-block; }

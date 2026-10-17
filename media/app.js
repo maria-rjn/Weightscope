@@ -45,7 +45,7 @@
   function buildShell() {
     state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = [];
     root.replaceChildren(); const shell = el('div', 'shell'), top = el('header', 'topbar'), brand = el('div', 'brand'), logo = el('span', 'logo');
-    add(logo, el('i'), el('i'), el('i')); add(brand, logo, el('span', '', 'WeightScope'));
+    logo.setAttribute('aria-hidden', 'true'); add(brand, logo, el('span', '', 'WeightScope'));
     const tools = el('details', 'tools-menu'); add(tools, el('summary', '', 'Tools'), add(el('div', 'tools-popover'), action('Open Ollama model', 'openOllama'), action('Compare Ollama model', 'compareOllama'), action('Save checkpoint as…', 'saveCheckpoint'), action('Refresh model', 'refresh'), action('Export JSON report', 'export'), action('PyTorch setup', 'setup')));
     add(top, brand, add(el('div', 'actions'), add(el('span', 'local-label'), el('i', 'dot'), document.createTextNode('Local inspection')), tools, action('Compare checkpoint', 'compare', {}, 'primary')));
     const error = el('div', 'notice error'); error.id = 'error'; error.setAttribute('role', 'alert'); error.hidden = true;

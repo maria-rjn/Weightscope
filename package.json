@@ -1,9 +1,10 @@
 {
   "name": "weightscope",
-  "displayName": "WeightScope — Model & Checkpoint Inspector",
+  "displayName": "WeightScope — Safetensors, GGUF & Checkpoint Inspector",
   "description": "Inspect model layers, tensor health, precision and checkpoint drift locally, on demand.",
   "version": "0.4.0",
   "publisher": "weightscope-local",
+  "icon": "media/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,7 +30,12 @@
     "gguf",
     "onnx",
     "pytorch",
-    "ollama"
+    "ollama",
+    "tensor",
+    "weights",
+    "llm",
+    "quantization",
+    "model viewer"
   ],
   "main": "./src/extension.js",
   "extensionKind": [
