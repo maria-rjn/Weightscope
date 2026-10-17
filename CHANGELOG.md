@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 - Explain every part of the inspector in place. Each section has a **?** button that opens a short explanation: what it shows, how to read it, and how its numbers are computed and where they stop being reliable. Open explanations stay open while maps and drawers redraw.
 - Add a searchable **Guide** tab that collects every explanation, with key ideas for newcomers and research recipes for common questions.
