@@ -38,6 +38,8 @@ The **weight image** reduces a tensor to at most 192 × 192 tiles and colors eac
 
 The tensor difference drawer overlays baseline bars and a target line with identical bin boundaries and a common vertical scale (percentage of finite analyzed values). It uses the existing bounded samples; no extra weight reads or background scans are needed. NaN/Inf diagnostics remain separate. JSON reports include the histogram bounds and both series.
 
+Every section has a **?** button that explains it in place: what it shows, how to read it, and how its numbers are computed and where they stop being reliable. The tensor inspector also names each tensor's likely role from common Hugging Face and llama.cpp naming conventions (for example, an attention query projection) and describes its storage type (for example, how Q4_K packs 4.5 bits per weight). The **Guide** tab collects every explanation in one searchable page, with research recipes for common questions.
+
 **Browse tree** opens the tensor name hierarchy. **More columns** reveals exact values and storage bytes. **Tools** contains refresh, JSON export, and Python setup. **Model details** holds full metadata and precision distribution.
 
 ## Open sharded Hugging Face checkpoints

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Explain every part of the inspector in place. Each section has a **?** button that opens a short explanation: what it shows, how to read it, and how its numbers are computed and where they stop being reliable. Open explanations stay open while maps and drawers redraw.
+- Add a searchable **Guide** tab that collects every explanation, with key ideas for newcomers and research recipes for common questions.
+- Name each tensor's likely role (for example an attention query projection, a mixture-of-experts router or a LoRA matrix) from Hugging Face, GPT-2 and llama.cpp naming conventions, and describe how its storage type represents values, in the tensor inspector and tensor difference drawer.
+- Describe each storage type in **Model details → Precision distribution**, each color mode under the model map, each comparison result in the status legend, and each **Tools** menu entry.
+
 ## 0.5.0
 
 - Open **Explore** on a **Model map**: one cell per tensor, layer groups as columns and tensor roles as rows, colored by precision (with bits per value) or stored values without reading weights. **Scan weights** samples every tensor once on request, streams progress, and colors the map by weight RMS or largest magnitude; scanned statistics also appear in the tensor inspector. Layer size bars remain below the map.
