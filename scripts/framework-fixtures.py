@@ -27,6 +27,13 @@ for number, names in enumerate((("layer.weight", "layer.bias"), ("noncontiguous"
     weight_map.update(dict.fromkeys(names, shard))
 total_size = sum(t.numel() * t.element_size() for t in tensors.values())
 (sharded / "model.safetensors.index.json").write_text(json.dumps({"metadata": {"total_size": total_size}, "weight_map": weight_map}, indent=2, sort_keys=True))
+# Older Hugging Face repositories ship torch.save .bin shards and their own index beside the safetensors files.
+bin_map = {}
+for number, names in enumerate((("layer.weight", "layer.bias"), ("noncontiguous", "empty")), 1):
+    shard = f"pytorch_model-{number:05d}-of-00002.bin"
+    torch.save({k: tensors[k] for k in names}, sharded / shard)
+    bin_map.update(dict.fromkeys(names, shard))
+(sharded / "pytorch_model.bin.index.json").write_text(json.dumps({"metadata": {"total_size": total_size}, "weight_map": bin_map}, indent=2, sort_keys=True))
 
 class PicklePayload:
     def __reduce__(self):

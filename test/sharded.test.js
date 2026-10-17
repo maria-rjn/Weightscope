@@ -164,7 +164,7 @@ test('the inspector opens sharded checkpoints, names reports after them and prot
     const model = posts.find(m => m.type === 'model').model;
     assert.equal(model.name, 'tiny-llm/model.safetensors'); assert.equal(model.summary.tensorCount, 5); assert.equal(model.editing.save, false);
     await receive({ type: 'compare' });
-    assert.deepEqual(dialogs[0].filters['Sharded safetensors index'], ['json']);
+    assert.deepEqual(dialogs[0].filters['Sharded checkpoint index'], ['json']); assert.deepEqual(dialogs[0].filters['PyTorch shards'], ['bin']);
     assert.ok(posts.find(m => m.type === 'comparison').rows.every(r => r.status === 'unverified'));
     await receive({ type: 'export' }); assert.equal(dialogs.at(-1).defaultUri.fsPath, path.join(dir, 'model.safetensors.weightscope.json'));
     assert.equal(JSON.parse(await fs.readFile(saveFile, 'utf8')).model.source.shards.length, 3);

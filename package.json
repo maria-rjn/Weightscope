@@ -90,6 +90,12 @@
           },
           {
             "filenamePattern": "*.safetensors.index.json"
+          },
+          {
+            "filenamePattern": "*.bin.index.json"
+          },
+          {
+            "filenamePattern": "*-[0-9]*-of-[0-9]*.bin"
           }
         ],
         "priority": "default"
@@ -99,7 +105,7 @@
       "explorer/context": [
         {
           "command": "weightscope.open",
-          "when": "resourceExtname =~ /\\.(safetensors|gguf|onnx|pt|pth)$/ || resourceFilename =~ /\\.safetensors\\.index\\.json$/",
+          "when": "resourceExtname =~ /\\.(safetensors|gguf|onnx|pt|pth)$/ || resourceFilename =~ /\\.(safetensors|bin)\\.index\\.json$/ || resourceFilename =~ /-[0-9]+-of-[0-9]+\\.bin$/",
           "group": "navigation"
         }
       ]

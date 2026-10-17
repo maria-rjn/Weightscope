@@ -8,7 +8,8 @@ const backend = require('./backend');
 const ollama = require('./ollama');
 const checkpoint = require('./checkpoint');
 const VIEW = 'weightscope.inspector';
-const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'], 'Sharded safetensors index': ['json'] };
+// Dialog filters match extensions only: .json selects shard indexes and .bin selects PyTorch shards.
+const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'], 'Sharded checkpoint index': ['json'], 'PyTorch shards': ['bin'] };
 
 function settings() {
   const c = vscode.workspace.getConfiguration('weightscope');

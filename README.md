@@ -2,7 +2,7 @@
 
 A local VS Code extension for inspecting model checkpoints and answering **what changed, and are the weights healthy?** Original checkpoints stay unchanged.
 
-Open `.safetensors` (single-file or sharded), `.gguf`, `.onnx`, `.pt`, or `.pth` files, or select a downloaded Ollama model from its local catalog. Explore a layer tree, shapes, stored parameter counts, dtype distribution, quantization metadata, tensor statistics, and checkpoint differences. Inspection and analysis run on demand. There are no uploads, network requests, or telemetry in the extension.
+Open `.safetensors` (single-file or sharded), `.gguf`, `.onnx`, `.pt`, or `.pth` files, sharded PyTorch `.bin` checkpoints, or select a downloaded Ollama model from its local catalog. Explore a layer tree, shapes, stored parameter counts, dtype distribution, quantization metadata, tensor statistics, and checkpoint differences. Inspection and analysis run on demand. There are no uploads, network requests, or telemetry in the extension.
 
 ![Model overview with aligned layer size bars](docs/images/layer-overview.jpg)
 
@@ -33,9 +33,11 @@ The tensor difference drawer overlays baseline bars and a target line with ident
 
 Large Hugging Face models ship as `model-00001-of-0000N.safetensors` shards plus a `model.safetensors.index.json` index. Open the index or **any shard**: WeightScope reads every shard's header and presents one checkpoint, with combined totals, layer groups, statistics, and comparisons. Sharded checkpoints compare with each other and with single-file, GGUF, ONNX, PyTorch, and Ollama checkpoints. Only shard headers are read when opening; numerical analysis reads each tensor from its own shard.
 
-The index must sit next to its shards and may only name `.safetensors` files in that folder. Hugging Face cache snapshots (`models--<owner>--<name>/snapshots/<revision>`) work in place, including their symlinked blobs, and are named after the repository. **Model details → Safetensors shards** lists each shard with its tensor count and size, and the tensor inspector names the shard that stores each tensor.
+Older Hugging Face models ship PyTorch shards instead: `pytorch_model-00001-of-0000N.bin` plus `pytorch_model.bin.index.json`. They open the same way, from the index or any `.bin` shard, and follow the same validation and fallback rules below. Shard metadata and values are read through the PyTorch helper with restricted weights-only loading, so `.bin` shards need a trusted workspace and the [PyTorch setup](docs/PYTORCH.md). The helper runs once per shard when opening, and each analysis reads only the shard that stores the tensor. A standalone `.bin` file that is not a shard (such as a single `pytorch_model.bin`) is not opened. Many repositories ship both layouts in one folder: each shard uses the index of its own format, and the two checkpoints compare tensor by tensor.
 
-Any index name ending in `.safetensors.index.json` is supported, such as `diffusion_pytorch_model.safetensors.index.json`. If the index is missing but every shard is present, shards are grouped by file name, with a note. An index that is invalid, names a missing shard, or disagrees with the shard headers (a listed tensor is absent, stored in a different shard, or duplicated) is reported as an error when you open the index. Opening one of its shards instead shows that shard alone, with a note that totals and comparisons cover only that file. Tensors stored in shards but missing from the weight map are included, with a note. To view an index as JSON, use **Reopen Editor With… → Text Editor**.
+The index must sit next to its shards and may only name files of its own format (`.safetensors` or `.bin`) in that folder. Hugging Face cache snapshots (`models--<owner>--<name>/snapshots/<revision>`) work in place, including their symlinked blobs, and are named after the repository. **Model details → Safetensors shards** (or **PyTorch shards**) lists each shard with its tensor count and size, and the tensor inspector names the shard that stores each tensor.
+
+Any index name ending in `.safetensors.index.json` or `.bin.index.json` is supported, such as `diffusion_pytorch_model.safetensors.index.json`. If the index is missing but every shard is present, shards are grouped by file name, with a note. An index that is invalid, names a missing or unreadable shard, or disagrees with the shard contents (a listed tensor is absent, stored in a different shard, or duplicated) is reported as an error when you open the index. Opening one of its shards instead shows that shard alone, with a note that totals and comparisons cover only that file. Tensors stored in shards but missing from the weight map are included, with a note. To view an index as JSON, use **Reopen Editor With… → Text Editor**.
 
 ## Open downloaded Ollama models
 
@@ -66,7 +68,7 @@ Layer groups follow the first numbered module in tensor names, or the enclosing 
 
 **Tools → Save checkpoint as…** streams a complete copy to a temporary file, validates its tensor structure, and publishes it under a new name. Existing files and aliases are never overwritten. Cancellation and validation failures remove the temporary file. Memory usage stays bounded while copying large models.
 
-Single-file safetensors, GGUF (including downloaded Ollama GGUF blobs), ONNX, and supported PyTorch checkpoints retain their format. PyTorch validation requires the same trusted workspace and interpreter as inspection. ONNX files with external weights must stay in the original directory to preserve relative references; external weights are shared, not copied. Multi-blob Ollama safetensors and sharded safetensors export are not supported; copy the model folder to duplicate a sharded checkpoint.
+Single-file safetensors, GGUF (including downloaded Ollama GGUF blobs), ONNX, and supported PyTorch checkpoints retain their format. PyTorch validation requires the same trusted workspace and interpreter as inspection. ONNX files with external weights must stay in the original directory to preserve relative references; external weights are shared, not copied. Multi-blob Ollama safetensors and sharded safetensors or PyTorch export are not supported; copy the model folder to duplicate a sharded checkpoint.
 
 ## Format support
 
@@ -76,7 +78,7 @@ Single-file safetensors, GGUF (including downloaded Ollama GGUF blobs), ONNX, an
 | Ollama MXFP8 safetensors | Stored U32 layout and logical shape/count, scale reference, block metadata | Sampled dequantized E4M3FN × E8M0 values and cross-format comparisons | Native Node.js; no MLX/Python dependency |
 | GGUF | Little-endian v2/v3, tensor metadata, quantization blocks, effective bits per weight | Plain scalar types, Q4_0/Q4_1/Q5_0/Q5_1/Q8_0, Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/Q8_K | Native Node.js |
 | ONNX | Initializers, tensor-valued Constant operators, nested graphs, quantization annotations, metadata, operator list | Common scalar raw and typed storage, external weights confined to the model directory | Native streaming protobuf reader; no Python |
-| PyTorch `.pt`/`.pth` | Plain tensors/state dicts, common training checkpoint wrappers | Dense real non-quantized tensors, including non-contiguous layouts | Python with PyTorch **>= 2.6**, trusted workspace |
+| PyTorch `.pt`/`.pth`, sharded `.bin` | Plain tensors/state dicts, common training checkpoint wrappers; Hugging Face `.bin` shards with or without a `.bin.index.json` | Dense real non-quantized tensors, including non-contiguous layouts | Python with PyTorch **>= 2.6**, trusted workspace |
 
 GGUF IQ and newer schemes expose their type, count, block geometry, and byte size. Their numerical decoders are not included in this release. Unknown GGML types and version-dependent Q8_1 block layouts show unknown byte sizes. Big-endian GGUF and version 1 are unsupported.
 
