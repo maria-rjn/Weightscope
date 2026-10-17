@@ -43,6 +43,10 @@ test('extension activation, webview handshake, stats, comparison, export and che
     await receive({ type: 'stats', name: 'layer.weight' }); assert.equal(posts.find(m => m.type === 'statistics').data.mean, 1.5);
     await receive({ type: 'compare' }); assert.equal(posts.find(m => m.type === 'comparison').rows[0].status, 'unverified');
     assert.equal(posts.find(m => m.type === 'comparison').matching.kind, 'exact');
+    await receive({ type: 'image', name: 'layer.weight' }); assert.deepEqual(posts.find(m => m.type === 'tensorImage').data.peak, [1, 2]);
+    await receive({ type: 'diffImage', name: 'layer.weight' }); assert.deepEqual(posts.find(m => m.type === 'diffImage').data.peak, [0, 1]);
+    // A reloaded webview gets its images back with its statistics.
+    const before = posts.length; await receive({ type: 'ready' }); assert.ok(posts.slice(before).some(m => m.type === 'tensorImage')); assert.ok(posts.slice(before).some(m => m.type === 'diffImage'));
     await receive({ type: 'analyzeDiff' }); assert.equal(posts.find(m => m.type === 'diffRow').row.metrics.maxAbs, 1);
     assert.equal(posts.find(m => m.type === 'statistics').data.histogramRange.min, 1);
     assert.equal(posts.find(m => m.type === 'diffRow').row.metrics.distributions.max, 3);

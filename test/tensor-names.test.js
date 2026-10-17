@@ -54,6 +54,9 @@ test('Hugging Face names pair with llama.cpp GGUF names and permuted Q/K rows co
     const d = await backend.compareTensor(hf, gguf, row.name);
     assert.equal(d.status, 'equal', row.name); assert.equal(d.maxAbs, 0);
   }
+  // Change images gather the same translated positions, so restored rotary rows show no change.
+  const change = await backend.differenceImage(hf, gguf, q.name);
+  assert.equal(change.exact, true); assert.ok(change.peak.every(v => v === 0)); assert.equal(change.largest.value, 0);
   // Bounded samples gather the matching GGUF positions across row and head boundaries.
   const sampled = await backend.compareTensor(hf, gguf, q.name, { sampleSize: 64 });
   assert.equal(sampled.status, 'sample-match'); assert.equal(sampled.sampled, 64); assert.equal(sampled.total, 256);

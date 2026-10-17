@@ -3,12 +3,12 @@
 (() => {
   const vscode = acquireVsCodeApi(), view = WeightScopeView, root = document.getElementById('app'), saved = vscode.getState() || {}, PAGE = 40;
   const state = { tab: saved.tab || 'weights', query: saved.query || '', dtype: '', page: 0, groupPage: 0, group: '', selected: saved.selected || '',
-    stats: new Map(), rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffRole: '', diffPage: 0, diffDetailsOpen: false,
+    stats: new Map(), images: new Map(), diffImages: new Map(), imageMode: saved.imageMode === 'peak' ? 'peak' : 'rms', imageRange: saved.imageRange === 'full' ? 'full' : 'clip', rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffRole: '', diffPage: 0, diffDetailsOpen: false,
     sizeMetric: saved.sizeMetric === 'bytes' ? 'bytes' : 'elements', mapPage: 0, rolePage: 0, mapQuery: '', chartObservers: [],
     mapView: saved.mapView === 'table' ? 'table' : 'fingerprint', mapScale: saved.mapScale === 'linear' ? 'linear' : 'log', mapCursor: null, mapObserver: null,
     busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
-  const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected, sizeMetric: state.sizeMetric, mapView: state.mapView, mapScale: state.mapScale });
+  const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected, sizeMetric: state.sizeMetric, mapView: state.mapView, mapScale: state.mapScale, imageMode: state.imageMode, imageRange: state.imageRange });
   const number = n => n == null ? '—' : new Intl.NumberFormat('en', { maximumSignificantDigits: 5 }).format(n);
   const integer = n => new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(n);
   const compact = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
@@ -124,6 +124,44 @@
   function showDifference(name) { state.returnFocus = document.activeElement; state.selectedDiff = name; state.drawerMode = 'diff'; state.drawerOpen = true; renderDetail(); }
   function drawerHeader(parent, title, name) { const h = el('h2', '', title); h.id = 'drawer-title'; h.tabIndex = -1; add(parent, add(el('div', 'drawer-header'), h, button('Close', () => parent.close(), 'ghost')), brokenName(name)); const error = el('div', 'notice error'); error.id = 'drawer-error'; error.setAttribute('role', 'alert'); error.hidden = true; parent.append(error); }
   function tiles(items) { const n = el('div', 'metric-tiles'); for (const [label, value] of items) n.append(add(el('div'), el('div', 'subtle', label), el('div', 'metric-value', value))); return n; }
+  const quantile = (sorted, q) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : 0;
+  // A tensor as pixels: each pixel is one tile of its matrix view, colored by the tile's signed peak or RMS.
+  function imageSection(parent, data, kind) {
+    const box = el('div', 'weight-image'), canvas = el('canvas'), readout = el('p', 'image-readout'), legend = el('div', 'image-legend'), facts = el('p', 'subtle'), word = kind === 'diff' ? 'change' : 'value';
+    const span = (i, n, total, unit) => { const a = Math.floor(i * total / n), b = Math.max(a, Math.ceil((i + 1) * total / n) - 1); return a === b ? `${unit} ${integer(a)}` : `${unit}s ${integer(a)}–${integer(b)}`; };
+    const where = t => `${span(Math.floor(t / data.tileCols), data.tileRows, data.rows, 'row')}, ${span(t % data.tileCols, data.tileCols, data.cols, 'column')}`;
+    const hint = 'Hover the image to read a tile.', nonFinite = new Set(data.nonFinite);
+    const controls = add(el('div', 'image-controls'), select([['rms', 'RMS'], ['peak', 'Signed peak']], state.imageMode, v => { state.imageMode = v; persist(); draw(); }, 'Image statistic'), select([['clip', 'Clip outer 0.5%'], ['full', 'Full range']], state.imageRange, v => { state.imageRange = v; persist(); draw(); }, 'Image color range'));
+    canvas.setAttribute('role', 'img'); readout.textContent = hint; box.append(canvas); add(parent, controls, box, readout, legend, facts);
+    function draw() {
+      const peak = state.imageMode === 'peak', values = data[peak ? 'peak' : 'rms'], light = lightTheme(), magnitudes = values.filter(v => v != null).map(Math.abs).sort((a, b) => a - b);
+      // Signed peaks share one symmetric range around zero. RMS is never negative and clusters well above zero, so it spans its own low-to-high range.
+      const level = (state.imageRange === 'clip' ? quantile(magnitudes, .995) : magnitudes.at(-1)) || magnitudes.at(-1) || 1;
+      const floor = peak ? 0 : Math.min(state.imageRange === 'clip' ? quantile(magnitudes, .005) : magnitudes[0] ?? 0, level * .999), position = v => (v - floor) / (level - floor);
+      const clipped = level < (magnitudes.at(-1) || 0) || floor > (peak ? 0 : magnitudes[0] ?? 0);
+      const off = document.createElement('canvas'); off.width = data.tileCols; off.height = data.tileRows;
+      const g = off.getContext('2d'); g.fillStyle = getComputedStyle(box).getPropertyValue('--mint'); g.fillRect(0, 0, 1, 1); const invalid = [...g.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+      const pixels = g.createImageData(data.tileCols, data.tileRows);
+      values.forEach((v, i) => { if (nonFinite.has(i)) pixels.data.set([...invalid, 255], i * 4); else if (v != null) pixels.data.set([...(peak ? view.divergingRgb(v / level, light) : view.heatRgb(position(v), light)), 255], i * 4); });
+      g.putImageData(pixels, 0, 0);
+      const width = Math.max(120, box.clientWidth), natural = width * data.rows / data.cols, height = Math.round(Math.max(36, Math.min(width * 1.25, natural))), ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); canvas.style.height = `${height}px`;
+      const c = canvas.getContext('2d'); c.imageSmoothingEnabled = false; c.drawImage(off, 0, 0, canvas.width, canvas.height);
+      const ramp = el('i', 'image-ramp'); ramp.style.background = `linear-gradient(to right, ${[0, .25, .5, .75, 1].map(f => `rgb(${(peak ? view.divergingRgb(f * 2 - 1, light) : view.heatRgb(f, light)).join(', ')})`).join(', ')})`;
+      legend.replaceChildren(); add(legend, el('span', '', peak ? `−${chartNumber(level)}` : chartNumber(floor)), ramp, el('span', '', peak ? `+${chartNumber(level)}` : chartNumber(level)), el('span', 'subtle', peak ? `Signed peak ${word} per tile${clipped ? ', clipped' : ''}` : `RMS ${word} per tile${clipped ? ', clipped' : ''}`), nonFinite.size && add(el('span'), el('i', 'swatch non-finite-tile'), document.createTextNode(`${integer(nonFinite.size)} tiles contain NaN or infinity`)));
+      const largest = data.largest ? `Largest ${word} magnitude${data.exact ? '' : ' among values read'}: ${number(data.largest.value)} at ${where(data.largest.tile)}.` : `No finite ${word}s.`;
+      facts.textContent = `${data.exact ? 'Full tensor' : `${integer(data.rowsRead)} of ${integer(data.rows)} rows read${data.columnsSampled ? ' in sampled column windows' : ', every column'}`} · ${integer(data.rows)} × ${integer(data.cols)} shown as ${integer(data.tileRows)} × ${integer(data.tileCols)} tiles${data.shape.length > 2 ? ` (first ${data.split} of ${data.shape.length} dimensions as rows)` : ''}.${Math.abs(natural - height) > 1 ? ' Aspect ratio compressed to fit.' : ''}${clipped ? ` Colors saturate beyond ${peak ? `±${chartNumber(level)}` : `${chartNumber(floor)} and ${chartNumber(level)}`}.` : ''} ${largest}`;
+      canvas.setAttribute('aria-label', `${kind === 'diff' ? 'Change' : 'Weight'} image, ${data.tileRows} by ${data.tileCols} tiles. ${peak ? `Blue is negative and red is positive, saturating at ±${chartNumber(level)}` : `Brighter is larger RMS, from ${chartNumber(floor)} to ${chartNumber(level)}`}. ${largest}`);
+    }
+    canvas.addEventListener('pointermove', e => {
+      const r = Math.min(data.tileRows - 1, Math.floor(e.offsetY / canvas.clientHeight * data.tileRows)), col = Math.min(data.tileCols - 1, Math.floor(e.offsetX / canvas.clientWidth * data.tileCols)), t = r * data.tileCols + col;
+      readout.textContent = `${where(t)} · ${nonFinite.has(t) ? 'contains NaN or infinity' : data.peak[t] == null ? 'not read' : `peak ${number(data.peak[t])} · RMS ${number(data.rms[t])}`}`;
+    });
+    canvas.addEventListener('pointerleave', () => { readout.textContent = hint; });
+    parent.append(disclosure('How the image is made', el('p', 'subtle', `Each pixel is one tile of the ${word}s. Signed peak colors a tile by its ${word} with the largest magnitude, so a single outlier stays visible; RMS colors it by root mean square. Leading dimensions form rows and trailing dimensions form columns, in row-major order. Tensors with more than ${integer(4194304)} values (${integer(262144)} for PyTorch) read evenly spaced runs of whole rows; tiles that were not read stay hatched.`)));
+    const observer = new ResizeObserver(draw); observer.observe(box); state.chartObservers.push(observer); draw();
+  }
+  function imagePrompt(parent, text, label, type, name) { parent.append(add(el('div', 'image-prompt'), el('p', 'subtle', text), action(label, type, { name }, 'ghost'))); }
   function renderDetail() { const parent = document.getElementById('tensor-detail'); if (!parent || !state.drawerOpen) return; state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = []; const wasOpen = parent.open, hadFocus = parent.contains(document.activeElement); parent.replaceChildren(); if (state.drawerMode === 'diff') renderDiffDetail(parent); else renderTensorDetail(parent); if (!wasOpen && state.drawerOpen) parent.showModal(); else if (wasOpen && hadFocus) parent.querySelector('#drawer-title')?.focus({ preventScroll: true }); updateBusy(); }
   function distributionChart(parent, domain, series) {
     if (domain?.min == null || domain.max == null || !series.some(s => s.counts.some(Boolean))) { parent.append(el('p', 'subtle', 'No finite values available for a distribution.')); return; }
@@ -165,6 +203,7 @@
     const t = state.model.tensors.find(t => t.name === state.selected); if (!t) { state.drawerOpen = false; if (parent.open) parent.close(); return; }
     const decoded = t.logicalShape != null;
     drawerHeader(parent, 'Tensor inspector', t.name); add(parent, add(el('div', 'tensor-facts'), el('span', 'badge', decoded ? t.quantization.scheme.toUpperCase() : t.dtype), el('span', 'shape', shape(decoded ? { shape: t.logicalShape } : t))), el('p', 'subtle', `${integer(t.logicalElements ?? t.elements)} ${decoded ? 'weight' : 'stored'} values · ${bytes(t.bytes)}${t.shard ? ` · ${t.shard}` : ''}`)); const data = state.stats.get(t.name);
+    if (!t.analysisUnavailable) { parent.append(el('h3', '', 'Weight image')); const picture = state.images.get(t.name); if (picture) imageSection(parent, picture, 'tensor'); else imagePrompt(parent, 'See the whole tensor as pixels: outlier channels, head structure and empty regions.', 'Draw weight image', 'image', t.name); }
     if (t.analysisUnavailable) parent.append(add(el('div', 'analyze-prompt'), el('h3', '', 'Storage metadata available'), el('p', 'subtle', t.analysisUnavailable)));
     else if (!data) parent.append(add(el('div', 'analyze-prompt'), el('div', 'eyebrow', 'WEIGHT HEALTH'), el('h3', '', 'Check the values inside this tensor.'), el('p', 'subtle', 'See the distribution, range, and whether any values are NaN or infinite.'), action('Analyze weights', 'stats', { name: t.name }, 'primary full'), el('p', 'subtle', `Up to ${integer(state.settings.sampleSize)} values will be checked. Small tensors are checked in full.`)));
     else {
@@ -183,6 +222,7 @@
     drawerHeader(parent, 'Tensor difference', row.name); add(parent, badge(row.status), pairs([['Baseline', row.left ? `${row.left.dtype} · ${shape(row.left)}` : 'Not present'], ['Target', row.right ? `${row.right.dtype} · ${shape(row.right)}` : 'Not present']])); if (row.baseName) parent.append(pairs([['Baseline tensor', row.baseName], ['Target tensor', row.targetName]])); for (const note of row.layout || []) parent.append(el('p', 'subtle', note)); if (row.dtypeChanged) parent.append(el('p', 'subtle', 'The stored precision changed between checkpoints.')); const m = row.metrics;
     if (m) add(parent, el('h3', '', 'How much did it change?'), el('p', 'subtle', `${m.exact ? 'Full comparison' : 'Sampled comparison'} · ${integer(m.sampled)} / ${integer(m.total)} values`), tiles([['Mean absolute change', number(m.meanAbs)], ['Largest absolute change', number(m.maxAbs)], ['RMSE', number(m.rmse)], ['Cosine similarity', number(m.cosine)]]), disclosure('More comparison details', pairs([['Relative L2', number(m.relativeL2)], ['Changed values', integer(m.changedValues)], ['Non-finite pairs', integer(m.nonFinite)], ['Non-finite mismatches', integer(m.nonFiniteMismatch)], ['Absolute tolerance', number(m.tolerance)]]), el('p', 'subtle', 'Full match means all values agree within tolerance. Sample matches only describe the positions analyzed. Relative L2 and cosine are undefined for zero norms.')));
     else { const descriptions = { added: 'This tensor is present only in the target checkpoint.', removed: 'This tensor is present only in the baseline checkpoint.', 'shape-changed': 'The shape changed. Corresponding values cannot be compared directly.', 'basis-changed': 'These tensors use different numeric units, so a direct numerical delta would be misleading.' }; parent.append(el('p', 'subtle', descriptions[row.status] || 'Compare corresponding weight values to measure the difference.')); }
+    if (!['added', 'removed', 'shape-changed', 'basis-changed'].includes(row.status)) { parent.append(el('h3', '', 'Change image')); const picture = state.diffImages.get(row.name); if (picture) imageSection(parent, picture, 'diff'); else imagePrompt(parent, 'See where the weights changed: target minus baseline, tile by tile.', 'Draw change image', 'diffImage', row.name); }
     if (m?.distributions) { parent.append(el('h3', '', 'Baseline & target distributions'), el('p', 'subtle', 'Shared bin boundaries and scale. Baseline is filled; target is a line.')); distributionChart(parent, m.distributions, [{ label: 'Baseline', counts: m.distributions.baseline, className: 'histogram-baseline' }, { label: 'Target', counts: m.distributions.target, className: 'histogram-target' }]); }
     if (row.error) parent.append(el('div', 'notice error', row.error)); if (!['added', 'removed', 'shape-changed', 'basis-changed'].includes(row.status)) parent.append(action(m ? 'Analyze again' : 'Analyze this tensor', 'analyzeDiff', { name: row.name }, 'primary full'));
   }
@@ -393,9 +433,11 @@
   }
   window.addEventListener('message', event => {
     const m = event.data;
-    if (m.type === 'model') { clearTimeout(state.diffTimer); state.diffTimer = null; state.model = m.model; state.groups = view.groups(m.model.tensors); state.settings = m.settings; state.stats.clear(); state.rows = []; state.target = null; state.group = ''; state.page = 0; state.groupPage = 0; state.drawerOpen = false; buildShell(); }
+    if (m.type === 'model') { clearTimeout(state.diffTimer); state.diffTimer = null; state.model = m.model; state.groups = view.groups(m.model.tensors); state.settings = m.settings; state.stats.clear(); state.images.clear(); state.diffImages.clear(); state.rows = []; state.target = null; state.group = ''; state.page = 0; state.groupPage = 0; state.drawerOpen = false; buildShell(); }
     else if (m.type === 'statistics') { state.stats.set(m.name, m.data); if (state.drawerMode === 'tensor' && state.selected === m.name) renderDetail(); }
-    else if (m.type === 'comparison') { clearTimeout(state.diffTimer); state.diffTimer = null; document.getElementById('tensor-detail')?.close(); state.drawerOpen = false; state.target = m.target; state.rows = m.rows; state.matching = m.matching; state.tab = 'compare'; state.diffPage = 0; state.diffGroup = ''; state.diffRole = ''; state.mapQuery = ''; state.mapPage = 0; state.rolePage = 0; state.diffFilter = 'attention'; state.diffDetailsOpen = false; persist(); renderTab(); }
+    else if (m.type === 'tensorImage') { state.images.set(m.name, m.data); if (state.drawerMode === 'tensor' && state.selected === m.name) renderDetail(); }
+    else if (m.type === 'diffImage') { state.diffImages.set(m.name, m.data); if (state.drawerMode === 'diff' && state.selectedDiff === m.name) renderDetail(); }
+    else if (m.type === 'comparison') { clearTimeout(state.diffTimer); state.diffTimer = null; state.diffImages.clear(); document.getElementById('tensor-detail')?.close(); state.drawerOpen = false; state.target = m.target; state.rows = m.rows; state.matching = m.matching; state.tab = 'compare'; state.diffPage = 0; state.diffGroup = ''; state.diffRole = ''; state.mapQuery = ''; state.mapPage = 0; state.rolePage = 0; state.diffFilter = 'attention'; state.diffDetailsOpen = false; persist(); renderTab(); }
     else if (m.type === 'diffRow') { const index = state.rows.findIndex(r => r.name === m.row.name); if (index >= 0) state.rows[index] = m.row; state.busyLabel = `Comparing tensor ${m.completed} / ${m.total}…`; updateBusy(); if (state.drawerMode === 'diff' && state.selectedDiff === m.row.name) renderDetail(); if (!state.diffTimer) state.diffTimer = setTimeout(() => { state.diffTimer = null; renderDiffOverview(); renderDiffResults(); }, 150); }
     else if (m.type === 'diffDone') { clearTimeout(state.diffTimer); state.diffTimer = null; renderDiffOverview(); renderDiffResults(); }
     else if (m.type === 'busy') { state.busy = true; state.busyLabel = m.label; for (const id of ['error', 'drawer-error']) { const n = document.getElementById(id); if (n) n.hidden = true; } updateBusy(); }

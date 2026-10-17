@@ -76,6 +76,13 @@
     const ramp = RAMPS[light ? 'light' : 'dark'], p = Math.max(0, Math.min(1, t)) * (ramp.length - 1), i = Math.min(ramp.length - 2, Math.floor(p)), f = p - i;
     return ramp[i].map((c, k) => Math.round(c + (ramp[i + 1][k] - c) * f));
   }
+  // Signed values: blue below zero, red above. The center matches the theme, so near-zero weights recede into the page.
+  const DIVERGING = { dark: ['#b9dcff', '#5aa4e8', '#1f5c94', '#14171c', '#8c2f1c', '#e0663f', '#ffc6a8'].map(hex),
+    light: ['#2166ac', '#67a9cf', '#d1e5f0', '#f7f7f7', '#fddbc7', '#ef8a62', '#b2182b'].map(hex) };
+  function divergingRgb(t, light = false) {
+    const ramp = DIVERGING[light ? 'light' : 'dark'], p = (Math.max(-1, Math.min(1, t)) + 1) / 2 * (ramp.length - 1), i = Math.min(ramp.length - 2, Math.floor(p)), f = p - i;
+    return ramp[i].map((c, k) => Math.round(c + (ramp[i + 1][k] - c) * f));
+  }
   const heatColor = (t, light) => `rgb(${heatRgb(t, light).join(', ')})`;
   const heatInk = (t, light) => { const [r, g, b] = heatRgb(t, light); return .2126 * r + .7152 * g + .0722 * b > 140 ? 'dark' : 'light'; };
   // Translated cross-format rows also answer to the tensor name in the other checkpoint.
@@ -86,5 +93,5 @@
       && (!status || (status === 'attention' ? needsAttention(r) : r.status === status)))
       .sort((a, b) => Number(hasChange(b)) - Number(hasChange(a)) || (b.metrics?.maxAbs || 0) - (a.metrics?.maxAbs || 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   }
-  return { groupKey, groups, tensorRole, comparisonMatrix, driftScale, heatColor, heatInk, hasChange, needsAttention, diffOverview, diffRows, matchesQuery };
+  return { groupKey, groups, tensorRole, comparisonMatrix, driftScale, heatRgb, heatColor, heatInk, divergingRgb, hasChange, needsAttention, diffOverview, diffRows, matchesQuery };
 });
