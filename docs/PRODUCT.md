@@ -22,6 +22,8 @@ Version 0.2.0 simplifies the first-use workflow: visual layer groups lead into t
 
 Version 0.3.0 adds local Ollama catalog discovery, original GGUF blob inspection, aggregation of safetensors tensor blobs, and catalog-based comparison. Prompt settings and source metadata stay inside Model details. Packed tensor formats expose storage metadata with explicit numerical-decoding limits.
 
+The visualization update replaces overview cards with aligned size bars and comparison cards with a layer-by-tensor-role matrix. Roles are literal suffixes of tensor names, with a generic fallback and collision-preserving cells; they do not imply a model architecture or execution graph. Relative L2 uses one scale across all pages and filters, while coverage, precision, structural changes, and unavailable analysis retain separate labels. Tensor distributions have labeled axes, accessible bin counts, and shared-bin baseline/target overlays based on existing bounded samples. All rendering stays local with no runtime plotting dependencies.
+
 Explicit boundaries keep results trustworthy: name hierarchy is not a recovered execution graph; stored-element counts are not unique trainable counts; sample matches are not exact equality. Unsupported numerical decoders produce clear explanations rather than fabricated values.
 
 ## Candidate next releases

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Align model layer size bars on a shared scale, with stored-value and storage-byte measures and explicit unknown sizes.
+- Replace comparison cards with a searchable, paginated layer-by-tensor-role heatmap of relative L2 drift, preserving structural, precision, non-finite, and sampling states.
+- Add labeled SVG distributions, accessible bin-count tables, and baseline/target overlays computed with shared bins from the existing samples.
+- Improve narrow layouts, keyboard pagination, chart theme colors, and cleanup when inspectors close or refresh.
+
 - Decode Ollama MXFP8 packed weights with E4M3FN values and companion E8M0 scales for bounded statistics, histograms, and checkpoint comparison.
 - Show logical dimensions and weight counts in the tensor inspector while preserving stored shapes, counts, and dtypes in model summaries and exports.
 - Honor per-tensor quantization metadata in mixed blobs and keep scale tensors and unquantized floating-point tensors available for inspection.
