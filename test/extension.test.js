@@ -13,13 +13,14 @@ test('extension activation, webview handshake, stats, comparison, export and che
   await F.safetensors(base, [{ name: 'layer.weight', values: [1, 2] }]);
   await F.safetensors(target, [{ name: 'layer.weight', values: [1, 3] }]);
   const commands = new Map(), posts = [], uri = file => ({ scheme: 'file', fsPath: file, toString: () => `file:${file}` });
-  let provider, receive, dispose, saveFile = path.join(dir, 'report.json');
+  let provider, receive, dispose, startView, saveFile = path.join(dir, 'report.json');
   const vscode = {
     Uri: { file: uri, joinPath: (u, ...p) => uri(path.join(u.fsPath, ...p)) },
     workspace: { isTrusted: true, getConfiguration: () => ({ get: (_key, fallback) => fallback }), fs: { writeFile: (u, b) => fs.writeFile(u.fsPath, b) } },
     commands: { registerCommand: (name, fn) => { commands.set(name, fn); return { dispose() {} }; }, executeCommand: async () => {} },
     window: {
       registerCustomEditorProvider: (_view, p) => { provider = p; return { dispose() {} }; },
+      registerTreeDataProvider: (id, p) => { startView = { id, p }; return { dispose() {} }; },
       showOpenDialog: async () => [uri(target)], showSaveDialog: async () => uri(saveFile), showInformationMessage() {}
     }
   };
@@ -37,6 +38,7 @@ test('extension activation, webview handshake, stats, comparison, export and che
     assert.match(panel.webview.html, /Content-Security-Policy/); assert.match(panel.webview.html, /nonce-/);
     assert.ok(panel.webview.html.indexOf('model-view.js') < panel.webview.html.indexOf('app.js'));
     assert.ok(commands.has('weightscope.compare'));
+    assert.equal(startView.id, 'weightscope.start'); assert.deepEqual(await startView.p.getChildren(), []);
     await receive({ type: 'ready' }); assert.equal(posts.find(m => m.type === 'model').model.summary.parameters, 2);
     await receive({ type: 'stats', name: 'layer.weight' }); assert.equal(posts.find(m => m.type === 'statistics').data.mean, 1.5);
     await receive({ type: 'compare' }); assert.equal(posts.find(m => m.type === 'comparison').rows[0].status, 'unverified');
@@ -62,6 +64,16 @@ test('extension activation, webview handshake, stats, comparison, export and che
   } finally { dispose?.(); await fs.rm(dir, { recursive: true, force: true }); }
 });
 
+test('Start view offers every entry point before a model is open', async () => {
+  const manifest = JSON.parse(await fs.readFile(path.resolve(__dirname, '..', 'package.json'), 'utf8')), c = manifest.contributes;
+  const container = c.viewsContainers.activitybar.find(v => v.id === 'weightscope');
+  await fs.access(path.resolve(__dirname, '..', container.icon));
+  assert.ok(c.views.weightscope.some(v => v.id === 'weightscope.start'));
+  const welcome = c.viewsWelcome.find(w => w.view === 'weightscope.start').contents;
+  const linked = [...welcome.matchAll(/\(command:([\w.]+)\)/g)].map(m => m[1]);
+  assert.deepEqual(linked.sort(), c.commands.map(cmd => cmd.command).sort());
+});
+
 test('Ollama commands, folder fallback, restored editors, comparison and report protection', async t => {
   const { store } = require('./ollama-fixtures'), ollama = require('../src/ollama');
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'weightscope-ollama-extension-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -78,6 +90,7 @@ test('Ollama commands, folder fallback, restored editors, comparison and report 
     commands: { registerCommand: (name, fn) => { commands.set(name, fn); return { dispose() {} }; }, executeCommand: async (...args) => { executed.push(args); } },
     window: {
       registerCustomEditorProvider: (_view, p) => { provider = p; return { dispose() {} }; },
+      registerTreeDataProvider: () => ({ dispose() {} }),
       showQuickPick: async (items, options) => { const all = await items; pickers.push({ all, options }); const next = picks.shift(); if (!next) return; const item = all.find(i => next === 'browse' ? i.browse : i.label === next); assert.ok(item, `Missing picker choice: ${next}`); return item; },
       showOpenDialog: async options => { assert.equal(options.canSelectFolders, true); return [uri(s.root)]; },
       showSaveDialog: async options => { assert.ok(!options.defaultUri.fsPath.startsWith(s.root)); return uri(saveFile); },

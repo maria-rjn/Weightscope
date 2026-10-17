@@ -169,6 +169,8 @@ function activate(context) {
   };
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(VIEW, provider, { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false }),
+    // The Start view stays empty so VS Code shows its viewsWelcome actions from package.json.
+    vscode.window.registerTreeDataProvider('weightscope.start', { getTreeItem: item => item, getChildren: () => [] }),
     vscode.commands.registerCommand('weightscope.open', async uri => { const chosen = uri || await choose('Inspect a model checkpoint'); if (chosen) await open(chosen); }),
     vscode.commands.registerCommand('weightscope.openOllama', async () => {
       try { const chosen = await chooseOllama('Open a downloaded Ollama model'); if (chosen) await open(chosen); }

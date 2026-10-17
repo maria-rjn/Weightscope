@@ -110,6 +110,30 @@
         "priority": "default"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "weightscope",
+          "title": "WeightScope",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "weightscope": [
+        {
+          "id": "weightscope.start",
+          "name": "Start",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "weightscope.start",
+        "contents": "Inspect a local checkpoint: .safetensors, .gguf, .onnx, .pt, .pth, or a sharded Hugging Face index.\n[Inspect Model File…](command:weightscope.open)\nOpen a model you downloaded with Ollama. Ollama does not need to be running.\n[Open Ollama Model…](command:weightscope.openOllama)\nCompare a baseline with a target to see which tensors changed.\n[Compare Checkpoints…](command:weightscope.compare)\n[Compare Ollama Models…](command:weightscope.compareOllama)\nYou can also open a model file from the Explorer. PyTorch .pt and .pth files need a trusted workspace and [Python with PyTorch](command:weightscope.setup)."
+      }
+    ],
     "menus": {
       "explorer/context": [
         {

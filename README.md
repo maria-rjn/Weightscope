@@ -12,7 +12,7 @@ Open `.safetensors` (single-file or sharded), `.gguf`, `.onnx`, `.pt`, or `.pth`
 
 1. Clone this repository and run `npm ci`, then `npm run package` (Node.js 22 or newer is required for the packaging tools).
 2. In VS Code, run **Extensions: Install from VSIX…** and select the generated `artifacts/weightscope-0.4.1.vsix`.
-3. Open a supported model file, or run **WeightScope: Inspect Model**.
+3. Click the **WeightScope** icon in the Activity Bar. The **Start** view has buttons to inspect a model file, open an Ollama model, or compare checkpoints, so you don't need a model open first. You can also open a supported model file from the Explorer, or run any **WeightScope** command from the Command Palette.
 
 If another extension owns these file types, use **Reopen Editor With… → WeightScope**. Requires VS Code 1.90 or newer. Works locally and with Remote SSH when the extension and model are on the remote host.
 
@@ -41,7 +41,7 @@ Any index name ending in `.safetensors.index.json` or `.bin.index.json` is suppo
 
 ## Open downloaded Ollama models
 
-Run **WeightScope: Open Ollama Model** from the Command Palette (`Cmd+Shift+P` on macOS, `Ctrl+Shift+P` on Windows/Linux), then select a model/tag. The picker reads the local catalog and opens the original weights in place. Ollama does not need to be running, and no rename, copy, download, or model execution is needed.
+Click **Open Ollama Model…** in the WeightScope **Start** view, or run **WeightScope: Open Ollama Model** from the Command Palette (`Cmd+Shift+P` on macOS, `Ctrl+Shift+P` on Windows/Linux), then select a model/tag. The picker reads the local catalog and opens the original weights in place. Ollama does not need to be running, and no rename, copy, download, or model execution is needed.
 
 You can also open a tag file directly under `<store>/manifests/<registry>/<namespace>/<model>/<tag>`, such as `~/.ollama/models/manifests/registry.ollama.ai/library/tev1/4b`. WeightScope resolves this small JSON manifest to its downloaded weight blobs. If the file is already open as JSON, use **Reopen Editor With… → WeightScope**, or select the model with **WeightScope: Open Ollama Model**.
 
