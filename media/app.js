@@ -5,10 +5,10 @@
   const state = { tab: saved.tab || 'weights', query: saved.query || '', dtype: '', page: 0, groupPage: 0, group: '', selected: saved.selected || '',
     stats: new Map(), images: new Map(), diffImages: new Map(), imageMode: saved.imageMode === 'peak' ? 'peak' : 'rms', imageRange: saved.imageRange === 'full' ? 'full' : 'clip', rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffRole: '', diffPage: 0, diffDetailsOpen: false,
     sizeMetric: saved.sizeMetric === 'bytes' ? 'bytes' : 'elements', mapPage: 0, rolePage: 0, mapQuery: '', chartObservers: [],
-    mapView: saved.mapView === 'table' ? 'table' : 'fingerprint', mapScale: saved.mapScale === 'linear' ? 'linear' : 'log', mapCursor: null, mapObserver: null,
+    mapView: saved.mapView === 'table' ? 'table' : 'fingerprint', mapScale: saved.mapScale === 'linear' ? 'linear' : 'log', gridCursors: {}, gridObservers: new Map(), modelColor: ['size', 'rms', 'peak'].includes(saved.modelColor) ? saved.modelColor : 'precision', modelPage: 0, modelRolePage: 0, scanErrors: new Map(),
     busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
-  const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected, sizeMetric: state.sizeMetric, mapView: state.mapView, mapScale: state.mapScale, imageMode: state.imageMode, imageRange: state.imageRange });
+  const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected, sizeMetric: state.sizeMetric, mapView: state.mapView, mapScale: state.mapScale, imageMode: state.imageMode, imageRange: state.imageRange, modelColor: state.modelColor });
   const number = n => n == null ? '—' : new Intl.NumberFormat('en', { maximumSignificantDigits: 5 }).format(n);
   const integer = n => new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(n);
   const compact = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
@@ -44,7 +44,7 @@
   function heading(title, description, actions) { return add(el('div', 'section-heading'), add(el('div'), el('h2', '', title), description && el('p', 'subtle', description)), actions); }
   function showError(message) { for (const id of ['error', ...(state.drawerOpen ? ['drawer-error'] : [])]) { const n = document.getElementById(id); if (n) { n.className = 'notice error'; n.setAttribute('role', 'alert'); n.textContent = message; n.hidden = false; } } }
   function buildShell() {
-    state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = []; state.mapObserver?.disconnect(); state.mapObserver = null;
+    state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = []; state.gridObservers.forEach(o => o.disconnect()); state.gridObservers.clear();
     root.replaceChildren(); const shell = el('div', 'shell'), top = el('header', 'topbar'), brand = el('div', 'brand'), logo = el('span', 'logo');
     logo.setAttribute('aria-hidden', 'true'); add(brand, logo, el('span', '', 'WeightScope'));
     const tools = el('details', 'tools-menu'); add(tools, el('summary', '', 'Tools'), add(el('div', 'tools-popover'), action('Open Ollama model', 'openOllama'), action('Compare Ollama model', 'compareOllama'), action('Save checkpoint as…', 'saveCheckpoint'), action('Refresh model', 'refresh'), action('Export JSON report', 'export'), action('PyTorch setup', 'setup')));
@@ -70,7 +70,7 @@
     shell.append(drawer); root.append(shell); renderTab();
   }
   function renderTab() {
-    const content = document.getElementById('content'); if (!content) return; content.replaceChildren(); state.mapObserver?.disconnect(); state.mapObserver = null;
+    const content = document.getElementById('content'); if (!content) return; content.replaceChildren(); state.gridObservers.forEach(o => o.disconnect()); state.gridObservers.clear();
     document.querySelectorAll('[data-tab]').forEach(b => { b.classList.toggle('active', b.dataset.tab === state.tab); b.setAttribute('aria-pressed', String(b.dataset.tab === state.tab)); });
     if (state.tab === 'weights') renderWeights(content); else if (state.tab === 'compare') renderComparison(content); else if (state.tab === 'operators') renderOperators(content); else renderInfo(content);
   }
@@ -96,7 +96,8 @@
     if (group) parent.append(add(el('div', 'breadcrumb'), button('All layer groups', () => { state.group = ''; state.page = 0; renderWeightResults(); }, 'text-button'), el('span', '', '/'), brokenName(group.key, 'crumb-current')));
     if (!state.query && !state.dtype && !group) {
       const storage = state.sizeMetric === 'bytes', value = g => storage && g.unknownBytes ? null : g[state.sizeMetric];
-      const max = state.groups.reduce((n, g) => Math.max(n, value(g) || 0), 1), list = el('div', 'layer-list');
+      const max = state.groups.reduce((n, g) => Math.max(n, value(g) || 0), 1), list = el('div', 'layer-list'), map = el('section', 'model-map');
+      map.id = 'model-map'; parent.append(map); renderModelMap(map); if (state.groups.length) parent.append(el('h3', 'list-title', 'Layer groups'));
       parent.append(add(el('div', 'list-heading'), el('p', 'map-hint', 'Groups follow tensor names. Bars share one scale across all pages.'), select([['elements', 'Stored values'], ['bytes', 'Storage bytes']], state.sizeMetric, v => { state.sizeMetric = v; persist(); renderWeightResults(); }, 'Layer bar measure')));
       state.groupPage = Math.min(state.groupPage, Math.max(0, Math.ceil(state.groups.length / 24) - 1));
       for (const g of state.groups.slice(state.groupPage * 24, (state.groupPage + 1) * 24)) {
@@ -120,6 +121,59 @@
     }
     parent.append(wrap); pager(parent, tensors.length, state.page, p => { state.page = p; renderWeightResults(); });
   }
+  // Tableau 10: distinct categories that hold up on dark and light backgrounds.
+  const PRECISION_COLORS = ['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac'];
+  const peakOf = s => s?.min == null ? null : Math.max(Math.abs(s.min), Math.abs(s.max));
+  // The model at a glance: every tensor is one cell, colored right away by stored precision or size, or by weight statistics after a scan.
+  function renderModelMap(container) {
+    state.gridObservers.get('model-map')?.disconnect(); container.replaceChildren();
+    const tensors = state.model.tensors, mode = state.modelColor, stats = state.stats, light = lightTheme(); if (!tensors.length) return;
+    const matrix = view.comparisonMatrix(tensors), kinds = view.precisionKinds(tensors), colorOf = new Map(kinds.map((k, i) => [k.label, PRECISION_COLORS[i % PRECISION_COLORS.length]]));
+    const scannable = tensors.filter(t => !t.analysisUnavailable), scanned = scannable.filter(t => stats.has(t.name) || state.scanErrors.has(t.name)).length, numeric = mode === 'rms' || mode === 'peak';
+    const measure = t => mode === 'size' ? t.logicalElements ?? t.elements : mode === 'rms' ? stats.get(t.name)?.rms ?? null : mode === 'peak' ? peakOf(stats.get(t.name)) : null;
+    let low = Infinity, high = 0; for (const t of tensors) { const v = measure(t); if (Number.isFinite(v) && v > 0) { low = Math.min(low, v); high = Math.max(high, v); } }
+    const scale = view.rangeScale(low === Infinity ? 0 : low, high, 'log'), format = mode === 'size' ? compact : chartNumber;
+    const choice = select([['precision', 'Precision'], ['size', 'Stored values'], ['rms', 'Weight RMS'], ['peak', 'Largest |value|']], mode, v => { state.modelColor = v; persist(); refreshModelMap(); }, 'Color the model map by');
+    const scan = action(scanned ? 'Scan remaining weights' : 'Scan weights', 'scan', {}, 'ghost'); choice.dataset.matrixKey = 'model-color'; scan.dataset.matrixKey = 'model-scan';
+    scan.dataset.inactive = String(scanned >= scannable.length); scan.disabled = state.busy || scanned >= scannable.length;
+    container.append(add(el('div', 'map-heading'), add(el('div'), el('h3', '', 'Model map'), el('p', 'map-hint', `${integer(matrix.groups.length)} layer groups × ${integer(matrix.roles.length)} tensor roles · Select a cell to inspect its tensor.`)), add(el('div', 'map-controls'), choice, scan)));
+    const { groups, roles, size } = gridPage(matrix, 'modelPage', 'modelRolePage');
+    function modelCell(group, role, list) {
+      const t = list[0], s = stats.get(t.name), kind = view.precisionLabel(t), count = t.logicalElements ?? t.elements, values = list.map(measure).filter(Number.isFinite);
+      const value = values.length ? Math.max(...values) : null, scannedCell = list.every(x => stats.has(x.name)), error = list.map(x => x.analysisUnavailable || state.scanErrors.get(x.name)).find(Boolean);
+      const bad = list.reduce((n, x) => n + (stats.get(x.name)?.nan || 0) + (stats.get(x.name)?.inf || 0), 0), bits = t.bytes == null || !count ? null : t.bytes * 8 / count;
+      const dims = shape(t.logicalShape != null ? { shape: t.logicalShape } : t), reading = mode === 'precision' ? `${kind}${bits == null ? '' : ` · ${number(bits)} bits/value`} · ${dims}` : mode === 'size' ? `${compact(count)} values · ${bytes(t.bytes)}`
+        : scannedCell ? `${mode === 'rms' ? 'RMS' : 'Largest |value|'} ${number(value)} · ${s.exact ? 'full tensor' : 'sampled'}` : error ? 'Analysis unavailable' : 'Not scanned';
+      return { kind, value, scanned: scannedCell, error, bad, detail: `${list.length > 1 ? `${list.length} tensors · ` : ''}${reading}${bad ? ` · ${integer(bad)} NaN/Inf` : ''}`,
+        description: `${list.length > 1 ? `${group.key}, ${role}, ${list.length} tensors` : t.name}: ${kind}, ${dims}, ${compact(count)} values${s ? `, RMS ${number(s.rms)}, largest magnitude ${number(peakOf(s))}, ${s.exact ? 'full tensor' : 'sampled estimate'}` : ''}${bad ? `, ${integer(bad)} NaN or infinite values` : ''}${error ? `. ${error}` : ''}`,
+        open: () => { if (list.length === 1) selectTensor(t.name); else { state.group = group.key; state.page = 0; renderWeightResults(); } } };
+    }
+    const cells = groups.map(g => roles.map(r => g.cells.has(r) ? modelCell(g, r, g.cells.get(r)) : null));
+    gridCanvas(container, { key: 'model-map', label: 'Model map', roledescription: 'model map', groups, roles, cells, paint(g, item, x, y, w, h, t) {
+      if (mode === 'precision') { g.fillStyle = colorOf.get(item.kind); g.fillRect(x, y, w, h); }
+      else if (item.value > 0) { g.fillStyle = view.heatColor(scale.position(item.value), light); g.fillRect(x, y, w, h); }
+      else if (item.value === 0 || (numeric && item.scanned)) { g.globalAlpha = item.value === 0 ? .22 : .5; g.fillStyle = t.muted; g.fillRect(x, y, w, h); }
+      else if (item.error) t.outline(x, y, w, h, t.css('--red'), true);
+      else { g.fillStyle = t.pattern; g.fillRect(x, y, w, h); }
+      if (item.bad) t.corner(x, y, w, h, t.css('--red'), 'bottom');
+    } });
+    const legend = el('div', 'heatmap-legend'), swatch = (cls, text, color) => { const i = el('i', `swatch ${cls}`); if (color) i.style.background = color; return add(el('span'), i, document.createTextNode(text)); };
+    if (mode === 'precision') for (const k of kinds) legend.append(swatch('', `${k.label}${k.bits == null ? '' : ` · ${number(k.bits)} bits`} · ${integer(k.tensors)} tensor${k.tensors === 1 ? '' : 's'}`, colorOf.get(k.label)));
+    else {
+      if (scale.ticks.length) { const ramp = el('i', 'drift-ramp'); ramp.style.background = `linear-gradient(to right, ${[0, .25, .5, .75, 1].map(f => view.heatColor(f, light)).join(', ')})`; add(legend, el('span', '', `${mode === 'size' ? 'Stored values' : mode === 'rms' ? 'RMS' : 'Largest |value|'}${scale.mode === 'log' ? ' (log)' : ''}`), el('span', '', format(scale.ticks[0])), ramp, el('span', '', format(scale.ticks[2]))); }
+      if (numeric) add(legend, swatch('unverified', 'Not scanned'), swatch('undefined-drift', 'No finite values'), swatch('unavailable', 'Unavailable'));
+    }
+    if (stats.size) legend.append(swatch('non-finite', 'Contains NaN or infinity'));
+    container.append(legend, el('p', 'map-hint', `${integer(scanned)} of ${integer(scannable.length)} tensors scanned. ${numeric && !scanned ? 'Scan the weights to color the map by their values. ' : ''}A scan samples up to ${integer(state.settings.sampleSize)} values per tensor, like Analyze weights${state.model.format === 'pytorch' ? ', and starts the PyTorch helper once per tensor' : ''}. Cancel it at any time.`));
+    pager(container, matrix.groups.length, state.modelPage, p => { state.modelPage = p; refreshModelMap(); }, size.groups, 'groups');
+    pager(container, matrix.roles.length, state.modelRolePage, p => { state.modelRolePage = p; refreshModelMap(); }, size.roles, 'roles');
+  }
+  function refreshModelMap() {
+    const container = document.getElementById('model-map'); if (!container) return;
+    const focused = container.contains(document.activeElement) ? document.activeElement.dataset.matrixKey : null;
+    renderModelMap(container); if (focused) container.querySelector(`[data-matrix-key="${focused}"]`)?.focus({ preventScroll: true });
+  }
+  function scheduleModelMap() { if (!state.modelMapTimer) state.modelMapTimer = setTimeout(() => { state.modelMapTimer = null; refreshModelMap(); }, 150); }
   function selectTensor(name) { state.returnFocus = document.activeElement; state.selected = name; state.drawerMode = 'tensor'; state.drawerOpen = true; persist(); renderDetail(); document.querySelectorAll('[data-tensor-row]').forEach(r => r.classList.toggle('selected', r.dataset.tensorRow === name)); }
   function showDifference(name) { state.returnFocus = document.activeElement; state.selectedDiff = name; state.drawerMode = 'diff'; state.drawerOpen = true; renderDetail(); }
   function drawerHeader(parent, title, name) { const h = el('h2', '', title); h.id = 'drawer-title'; h.tabIndex = -1; add(parent, add(el('div', 'drawer-header'), h, button('Close', () => parent.close(), 'ghost')), brokenName(name)); const error = el('div', 'notice error'); error.id = 'drawer-error'; error.setAttribute('role', 'alert'); error.hidden = true; parent.append(error); }
@@ -264,11 +318,11 @@
     const main = rows.length > 1 ? `${rows.length} tensors` : m ? relative == null ? 'n/a' : percent(relative) : codes[status] || '—';
     const note = rows.length > 1 ? 'Select to list' : m ? `${m.exact ? 'Full' : 'Sample'}${row.dtypeChanged ? ' · P' : ''}${m.nonFiniteMismatch ? ' · !' : ''}` : `${labels[status]}${row.dtypeChanged ? ' · P' : ''}`;
     const description = rows.length > 1 ? `${group.key}, ${role}, ${rows.length} tensors${relative == null ? '' : `, largest relative L2 ${percent(relative)}`}` : `${row.name}: ${labels[row.status]}${row.dtypeChanged ? ', precision changed' : ''}${m ? `, ${relative == null ? 'relative L2 undefined for zero baseline norm or non-finite arithmetic' : `${percent(relative)} relative L2`}, ${m.exact ? 'full comparison' : 'sampled estimate'}, ${integer(m.sampled)} of ${integer(m.total)} values${m.nonFiniteMismatch ? `, ${integer(m.nonFiniteMismatch)} non-finite mismatches` : ''}` : ''}${row.error ? `. ${row.error}` : ''}`;
-    return { rows, status, relative, main, note, description, analyzed: rows.some(r => r.metrics), precision: rows.some(r => r.dtypeChanged), nonFinite: rows.some(r => r.metrics?.nonFiniteMismatch),
+    return { rows, status, relative, main, note, detail: `${main} · ${note}`, description, analyzed: rows.some(r => r.metrics), precision: rows.some(r => r.dtypeChanged), nonFinite: rows.some(r => r.metrics?.nonFiniteMismatch),
       open: () => rows.length === 1 ? showDifference(row.name) : openMapRows(group.key, role) };
   }
   function renderChangeMap(parent) {
-    state.mapObserver?.disconnect(); state.mapObserver = null;
+    state.gridObservers.get('fingerprint')?.disconnect();
     const all = view.comparisonMatrix(state.rows), query = state.mapQuery.toLowerCase(), scale = view.driftScale(all, state.mapScale), light = lightTheme();
     const matrix = query ? view.comparisonMatrix(state.rows.filter(r => view.matchesQuery(r, query))) : all, fingerprint = state.mapView === 'fingerprint';
     const viewChoice = select([['fingerprint', 'Fingerprint'], ['table', 'Table']], state.mapView, v => { state.mapView = v; state.mapPage = 0; state.rolePage = 0; persist(); renderDiffOverview(); }, 'Drift map view');
@@ -320,29 +374,27 @@
     }
     return { groups: rowSize, roles: columnSize };
   }
-  // Layer groups run left to right and tensor roles top to bottom, so a whole model's drift reads as one image.
-  function renderFingerprint(parent, matrix, scale, light) {
-    const columnSize = 160, rowSize = 48;
-    state.mapPage = Math.min(state.mapPage, Math.max(0, Math.ceil(matrix.groups.length / columnSize) - 1));
-    state.rolePage = Math.min(state.rolePage, Math.max(0, Math.ceil(matrix.roles.length / rowSize) - 1));
-    const groups = matrix.groups.slice(state.mapPage * columnSize, (state.mapPage + 1) * columnSize), roles = matrix.roles.slice(state.rolePage * rowSize, (state.rolePage + 1) * rowSize);
-    const cells = groups.map(g => roles.map(r => g.cells.has(r) ? mapCell(g, r, g.cells.get(r)) : null));
+  // A canvas grid of layer groups (columns, left to right) by tensor roles (rows, top to bottom), so a whole model reads as one
+  // image. Each item brings its tooltip lines, screen-reader description and action; paint draws its cell.
+  function gridCanvas(parent, { key, label, roledescription, groups, roles, cells, paint }) {
+    state.gridObservers.get(key)?.disconnect();
     const wrap = el('div', 'fingerprint'), canvas = el('canvas'), focus = el('div', 'fingerprint-focus'), tip = el('div', 'fingerprint-tip'), live = el('div', 'visually-hidden');
-    wrap.tabIndex = 0; wrap.dataset.matrixKey = 'fingerprint'; wrap.setAttribute('role', 'group'); wrap.setAttribute('aria-roledescription', 'drift fingerprint');
-    wrap.setAttribute('aria-label', `Drift fingerprint: ${integer(groups.length)} layer groups as columns, ${integer(roles.length)} tensor roles as rows. Arrow keys move between cells; Enter opens the selected cell.`);
+    wrap.tabIndex = 0; wrap.dataset.matrixKey = key; wrap.setAttribute('role', 'group'); wrap.setAttribute('aria-roledescription', roledescription);
+    wrap.setAttribute('aria-label', `${label}: ${integer(groups.length)} layer groups as columns, ${integer(roles.length)} tensor roles as rows. Arrow keys move between cells; Enter opens the selected cell.`);
     canvas.setAttribute('aria-hidden', 'true'); live.setAttribute('aria-live', 'polite'); focus.hidden = true; tip.hidden = true;
     add(wrap, canvas, focus, tip, live); parent.append(wrap);
-    let layout = null, cursor = (() => { const c = groups.findIndex(g => g.key === state.mapCursor?.group), r = roles.indexOf(state.mapCursor?.role); return c >= 0 && r >= 0 ? { c, r } : null; })();
+    const saved = state.gridCursors[key];
+    let layout = null, cursor = (() => { const c = groups.findIndex(g => g.key === saved?.group), r = roles.indexOf(saved?.role); return c >= 0 && r >= 0 ? { c, r } : null; })();
     const at = (x, y) => { if (!layout) return null; const c = Math.floor((x - layout.left) / layout.cell), r = Math.floor((y - layout.top) / layout.row); return x >= layout.left && y >= layout.top && c < groups.length && r < roles.length ? { c, r } : null; };
     function mark(p) {
       if (!p || !layout) { focus.hidden = true; tip.hidden = true; return; }
       const cell = cells[p.c][p.r], x = layout.left + p.c * layout.cell, y = layout.top + p.r * layout.row;
       Object.assign(focus.style, { left: `${x - 2}px`, top: `${y - 2}px`, width: `${layout.cell + 3}px`, height: `${layout.row + 3}px` }); focus.hidden = false;
-      tip.replaceChildren(el('strong', '', `${groups[p.c].key} · ${roles[p.r]}`), el('span', '', cell ? `${cell.main} · ${cell.note}` : 'No tensor in this group and role')); tip.hidden = false;
+      tip.replaceChildren(el('strong', '', `${groups[p.c].key} · ${roles[p.r]}`), el('span', '', cell ? cell.detail : 'No tensor in this group and role')); tip.hidden = false;
       const right = x + layout.cell + 10, left = right + tip.offsetWidth > wrap.clientWidth ? Math.max(0, x - tip.offsetWidth - 10) : right;
       Object.assign(tip.style, { left: `${left}px`, top: `${Math.max(0, Math.min(y - 6, wrap.clientHeight - tip.offsetHeight))}px` });
     }
-    function move(p) { cursor = p; state.mapCursor = { group: groups[p.c].key, role: roles[p.r] }; mark(p); live.textContent = cells[p.c][p.r]?.description || `${groups[p.c].key}, ${roles[p.r]}: no tensor`; }
+    function move(p) { cursor = p; state.gridCursors[key] = { group: groups[p.c].key, role: roles[p.r] }; mark(p); live.textContent = cells[p.c][p.r]?.description || `${groups[p.c].key}, ${roles[p.r]}: no tensor`; }
     function draw() {
       const style = getComputedStyle(wrap), css = name => style.getPropertyValue(name).trim(), mono = css('--vscode-editor-font-family') || 'monospace', ratio = window.devicePixelRatio || 1;
       const width = Math.max(240, wrap.clientWidth), gutter = Math.round(Math.min(200, Math.max(96, width * .2))), top = 2;
@@ -353,31 +405,20 @@
       const rotated = cell >= 13, axis = rotated ? Math.min(96, 14 + Math.max(...short.map(s => g.measureText(s).width))) : 24, height = top + roles.length * row + axis;
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); canvas.style.height = `${height}px`;
       g.setTransform(ratio, 0, 0, ratio, 0, 0); g.clearRect(0, 0, width, height); g.font = `11px ${mono}`; g.textBaseline = 'middle';
-      const muted = css('--muted'), colors = { added: css('--mint'), removed: css('--red'), unavailable: css('--red') }, hatch = document.createElement('canvas');
+      const muted = css('--muted'), hatch = document.createElement('canvas');
       hatch.width = hatch.height = 6; const h = hatch.getContext('2d'); h.strokeStyle = muted; h.globalAlpha = .55; h.beginPath(); h.moveTo(0, 6); h.lineTo(6, 0); h.stroke();
-      const pattern = g.createPattern(hatch, 'repeat');
+      const tools = { css, muted, pattern: g.createPattern(hatch, 'repeat'), light: lightTheme(),
+        // A tinted, outlined cell for structural states; a cross marks unavailable analysis.
+        outline(x, y, w, hgt, color, cross) { g.globalAlpha = .25; g.fillStyle = color; g.fillRect(x, y, w, hgt); g.globalAlpha = 1; g.strokeStyle = color; g.lineWidth = 1; g.strokeRect(x + .5, y + .5, w - 1, hgt - 1); if (cross && w >= 7) { g.beginPath(); g.moveTo(x + 2, y + 2); g.lineTo(x + w - 2, y + hgt - 2); g.moveTo(x + w - 2, y + 2); g.lineTo(x + 2, y + hgt - 2); g.stroke(); } },
+        corner(x, y, w, hgt, color, where) { if (w < 7) return; const n = Math.min(6, w / 2, hgt / 2); g.globalAlpha = 1; g.fillStyle = color; g.beginPath(); if (where === 'top') { g.moveTo(x + w - n, y); g.lineTo(x + w, y); g.lineTo(x + w, y + n); } else { g.moveTo(x, y + hgt - n); g.lineTo(x, y + hgt); g.lineTo(x + n, y + hgt); } g.fill(); } };
       g.fillStyle = muted; g.textAlign = 'right';
       roles.forEach((role, r) => g.fillText(fit(role.replace(/\.weight$/, ''), gutter - 14), gutter - 8, top + r * row + row / 2));
-      cells.forEach((column, c) => column.forEach((item, r) => {
-        if (!item) return;
-        const x = gutter + c * cell, y = top + r * row, w = cell - gap, hgt = row - gap;
-        if (item.relative != null) { g.globalAlpha = item.relative > 0 ? 1 : .22; g.fillStyle = item.relative > 0 ? view.heatColor(scale.position(item.relative), light) : muted; g.fillRect(x, y, w, hgt); }
-        else if (item.analyzed) { g.globalAlpha = .5; g.fillStyle = muted; g.fillRect(x, y, w, hgt); }
-        else if (['unverified', 'mixed'].includes(item.status)) { g.fillStyle = pattern; g.fillRect(x, y, w, hgt); }
-        else {
-          const color = colors[item.status] || css('--accent');
-          g.globalAlpha = .25; g.fillStyle = color; g.fillRect(x, y, w, hgt); g.globalAlpha = 1; g.strokeStyle = color; g.lineWidth = 1; g.strokeRect(x + .5, y + .5, w - 1, hgt - 1);
-          if (item.status === 'unavailable' && w >= 7) { g.beginPath(); g.moveTo(x + 2, y + 2); g.lineTo(x + w - 2, y + hgt - 2); g.moveTo(x + w - 2, y + 2); g.lineTo(x + 2, y + hgt - 2); g.stroke(); }
-        }
-        g.globalAlpha = 1; const corner = Math.min(6, w / 2, hgt / 2);
-        if (item.precision && w >= 7) { g.fillStyle = css('--accent'); g.beginPath(); g.moveTo(x + w - corner, y); g.lineTo(x + w, y); g.lineTo(x + w, y + corner); g.fill(); }
-        if (item.nonFinite && w >= 7) { g.fillStyle = css('--red'); g.beginPath(); g.moveTo(x, y + hgt - corner); g.lineTo(x, y + hgt); g.lineTo(x + corner, y + hgt); g.fill(); }
-      }));
+      cells.forEach((column, c) => column.forEach((item, r) => { if (item) { paint(g, item, gutter + c * cell, top + r * row, cell - gap, row - gap, tools); g.globalAlpha = 1; } }));
       g.fillStyle = muted; const base = top + roles.length * row + 6;
-      if (rotated) short.forEach((label, c) => { g.save(); g.translate(gutter + c * cell + cell / 2, base); g.rotate(-Math.PI / 2); g.textAlign = 'right'; g.fillText(fit(label, axis - 10), 0, 0); g.restore(); });
+      if (rotated) short.forEach((text, c) => { g.save(); g.translate(gutter + c * cell + cell / 2, base); g.rotate(-Math.PI / 2); g.textAlign = 'right'; g.fillText(fit(text, axis - 10), 0, 0); g.restore(); });
       else {
-        const step = [1, 2, 4, 5, 8, 10, 16, 20, 25, 32, 50, 64, 100, 128, 200, 256].find(s => s * cell >= 28) || 512; g.textAlign = 'center';
-        short.forEach((label, c) => { if (/^\d+$/.test(label) && Number(label) % step === 0) g.fillText(label, gutter + c * cell + cell / 2, base + 6); });
+        const step = [1, 2, 4, 5, 8, 10, 16, 20, 25, 32, 50, 64, 100, 128, 200, 256].find(n => n * cell >= 28) || 512; g.textAlign = 'center';
+        short.forEach((text, c) => { if (/^\d+$/.test(text) && Number(text) % step === 0) g.fillText(text, gutter + c * cell + cell / 2, base + 6); });
       }
       layout = { left: gutter, top, cell, row };
       if (cursor && document.activeElement === wrap) mark(cursor);
@@ -393,8 +434,27 @@
     canvas.addEventListener('pointermove', e => { const p = at(e.offsetX, e.offsetY); canvas.style.cursor = p && cells[p.c][p.r] ? 'pointer' : 'default'; mark(p || (document.activeElement === wrap ? cursor : null)); });
     canvas.addEventListener('pointerleave', () => mark(document.activeElement === wrap ? cursor : null));
     canvas.addEventListener('click', e => { const p = at(e.offsetX, e.offsetY); if (p && cells[p.c][p.r]) { move(p); cells[p.c][p.r].open(); } });
-    state.mapObserver = new ResizeObserver(draw); state.mapObserver.observe(wrap); draw();
-    return { groups: columnSize, roles: rowSize };
+    const observer = new ResizeObserver(draw); state.gridObservers.set(key, observer); observer.observe(wrap); draw();
+  }
+  // Grids page up to 160 layer groups and 48 tensor roles at a time.
+  function gridPage(matrix, pageKey, roleKey) {
+    const columnSize = 160, rowSize = 48;
+    state[pageKey] = Math.min(state[pageKey], Math.max(0, Math.ceil(matrix.groups.length / columnSize) - 1));
+    state[roleKey] = Math.min(state[roleKey], Math.max(0, Math.ceil(matrix.roles.length / rowSize) - 1));
+    return { groups: matrix.groups.slice(state[pageKey] * columnSize, (state[pageKey] + 1) * columnSize), roles: matrix.roles.slice(state[roleKey] * rowSize, (state[roleKey] + 1) * rowSize), size: { groups: columnSize, roles: rowSize } };
+  }
+  function renderFingerprint(parent, matrix, scale, light) {
+    const { groups, roles, size } = gridPage(matrix, 'mapPage', 'rolePage');
+    const cells = groups.map(g => roles.map(r => g.cells.has(r) ? mapCell(g, r, g.cells.get(r)) : null));
+    gridCanvas(parent, { key: 'fingerprint', label: 'Drift fingerprint', roledescription: 'drift fingerprint', groups, roles, cells, paint(g, item, x, y, w, h, t) {
+      if (item.relative != null) { g.globalAlpha = item.relative > 0 ? 1 : .22; g.fillStyle = item.relative > 0 ? view.heatColor(scale.position(item.relative), light) : t.muted; g.fillRect(x, y, w, h); }
+      else if (item.analyzed) { g.globalAlpha = .5; g.fillStyle = t.muted; g.fillRect(x, y, w, h); }
+      else if (['unverified', 'mixed'].includes(item.status)) { g.fillStyle = t.pattern; g.fillRect(x, y, w, h); }
+      else t.outline(x, y, w, h, item.status === 'added' ? t.css('--mint') : ['removed', 'unavailable'].includes(item.status) ? t.css('--red') : t.css('--accent'), item.status === 'unavailable');
+      if (item.precision) t.corner(x, y, w, h, t.css('--accent'), 'top');
+      if (item.nonFinite) t.corner(x, y, w, h, t.css('--red'), 'bottom');
+    } });
+    return size;
   }
   function renderDiffResults() {
     const parent = document.getElementById('diff-results'); if (!parent) return; parent.replaceChildren(); if (state.diffGroup) parent.append(add(el('div', 'breadcrumb'), button('All groups', () => { state.diffGroup = ''; state.diffRole = ''; state.diffPage = 0; renderDiffResults(); renderDiffOverview(); }, 'text-button'), el('span', '', '/'), brokenName(`${state.diffGroup}${state.diffRole ? ` / ${state.diffRole}` : ''}`, 'crumb-current')));
@@ -433,8 +493,13 @@
   }
   window.addEventListener('message', event => {
     const m = event.data;
-    if (m.type === 'model') { clearTimeout(state.diffTimer); state.diffTimer = null; state.model = m.model; state.groups = view.groups(m.model.tensors); state.settings = m.settings; state.stats.clear(); state.images.clear(); state.diffImages.clear(); state.rows = []; state.target = null; state.group = ''; state.page = 0; state.groupPage = 0; state.drawerOpen = false; buildShell(); }
-    else if (m.type === 'statistics') { state.stats.set(m.name, m.data); if (state.drawerMode === 'tensor' && state.selected === m.name) renderDetail(); }
+    if (m.type === 'model') { clearTimeout(state.diffTimer); state.diffTimer = null; state.model = m.model; state.groups = view.groups(m.model.tensors); state.settings = m.settings; state.stats.clear(); state.scanErrors.clear(); state.modelPage = 0; state.modelRolePage = 0; state.images.clear(); state.diffImages.clear(); state.rows = []; state.target = null; state.group = ''; state.page = 0; state.groupPage = 0; state.drawerOpen = false; buildShell(); }
+    else if (m.type === 'statistics' || m.type === 'scanError') {
+      if (m.type === 'statistics') state.stats.set(m.name, m.data); else state.scanErrors.set(m.name, m.message);
+      if (m.total) { state.busyLabel = `Scanning weights ${integer(m.completed)} / ${integer(m.total)}…`; updateBusy(); }
+      if (state.drawerMode === 'tensor' && state.selected === m.name) renderDetail(); scheduleModelMap();
+    }
+    else if (m.type === 'scanDone') { clearTimeout(state.modelMapTimer); state.modelMapTimer = null; refreshModelMap(); }
     else if (m.type === 'tensorImage') { state.images.set(m.name, m.data); if (state.drawerMode === 'tensor' && state.selected === m.name) renderDetail(); }
     else if (m.type === 'diffImage') { state.diffImages.set(m.name, m.data); if (state.drawerMode === 'diff' && state.selectedDiff === m.name) renderDetail(); }
     else if (m.type === 'comparison') { clearTimeout(state.diffTimer); state.diffTimer = null; state.diffImages.clear(); document.getElementById('tensor-detail')?.close(); state.drawerOpen = false; state.target = m.target; state.rows = m.rows; state.matching = m.matching; state.tab = 'compare'; state.diffPage = 0; state.diffGroup = ''; state.diffRole = ''; state.mapQuery = ''; state.mapPage = 0; state.rolePage = 0; state.diffFilter = 'attention'; state.diffDetailsOpen = false; persist(); renderTab(); }

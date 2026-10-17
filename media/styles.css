@@ -61,6 +61,8 @@ h3 { font-size: 15px; line-height: 1.5; font-weight: 550; margin: 0 0 10px; over
 .tree-row:hover { background: var(--selected); }
 .map-hint { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 15px 0; }
 .layer-list { margin: 8px 0; }
+.model-map { margin-bottom: 30px; }.model-map .heatmap-legend .swatch { flex: 0 0 auto; }
+.list-title { margin: 0; }
 .layer-row { display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(80px, 2fr) minmax(100px, .65fr); align-items: center; gap: 20px; width: 100%; text-align: left; padding: 15px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
 .layer-row:hover { background: var(--vscode-list-hoverBackground, #ffffff05); }
 .layer-label { min-width: 0; display: grid; gap: 5px; }

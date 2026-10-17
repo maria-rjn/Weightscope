@@ -121,3 +121,21 @@ test('signed image colors diverge around a theme-matched center', () => {
   assert.deepEqual(view.divergingRgb(0, true), [247, 247, 247]); assert.deepEqual(view.divergingRgb(5), view.divergingRgb(1));
   assert.deepEqual(view.heatRgb(1), [252, 253, 191]);
 });
+
+test('precision kinds name decoded schemes, count stored bits including block scales, and sort by bits', () => {
+  const kinds = view.precisionKinds([
+    { name: 'a', dtype: 'Q4_K', elements: 256, bytes: 144 }, { name: 'b', dtype: 'Q4_K', elements: 512, bytes: 288 },
+    { name: 'c', dtype: 'F32', elements: 4, bytes: 16 }, { name: 'd', dtype: 'IQ2_XS', elements: 256, bytes: null },
+    { name: 'e', dtype: 'U32', elements: 8, logicalShape: [32], logicalElements: 32, bytes: 32, quantization: { scheme: 'mxfp8' } }
+  ]);
+  assert.deepEqual(kinds.map(k => [k.label, k.bits, k.tensors]), [['F32', 32, 1], ['MXFP8', 8, 1], ['Q4_K', 4.5, 2], ['IQ2_XS', null, 1]]);
+  assert.equal(view.precisionLabel({ dtype: 'U32', quantization: { scheme: 'mxfp8' } }), 'U32', 'undecoded packed storage keeps its stored dtype');
+});
+
+test('range scale is shared by drift and model map values', () => {
+  const sizes = view.rangeScale(64, 6.7e8, 'log');
+  // Seven decades of tensor sizes keep the top six: 670 values and smaller share the lowest color.
+  assert.equal(sizes.mode, 'log'); assert.equal(sizes.position(64), 0); assert.equal(sizes.position(670), 0); assert.equal(sizes.position(6.7e8), 1);
+  assert.ok(Math.abs(sizes.position(6700) - 1 / 6) < 1e-12); assert.deepEqual(sizes.ticks.map(t => Number(t.toPrecision(3))), [670, 6.7e5, 6.7e8]);
+  assert.deepEqual(view.driftScale({ minRelativeL2: .01, maxRelativeL2: 1 }, 'log').ticks.map(t => Number(t.toPrecision(3))), [.01, .1, 1]);
+});
