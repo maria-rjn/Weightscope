@@ -8,7 +8,7 @@ const backend = require('./backend');
 const ollama = require('./ollama');
 const checkpoint = require('./checkpoint');
 const VIEW = 'weightscope.inspector';
-const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'] };
+const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'], 'Sharded safetensors index': ['json'] };
 
 function settings() {
   const c = vscode.workspace.getConfiguration('weightscope');
@@ -138,7 +138,8 @@ function activate(context) {
         setup,
         export: async () => {
           if (!model) return;
-          const defaultPath = model.source?.kind === 'ollama' ? path.join(os.homedir(), `${model.source.name.replace(/[^a-zA-Z0-9._-]/g, '_')}.weightscope.json`) : path.join(path.dirname(uri.fsPath), `${path.basename(uri.fsPath)}.weightscope.json`);
+          const reportName = model.source?.kind === 'sharded' ? path.posix.basename(model.source.name) : path.basename(uri.fsPath);
+          const defaultPath = model.source?.kind === 'ollama' ? path.join(os.homedir(), `${model.source.name.replace(/[^a-zA-Z0-9._-]/g, '_')}.weightscope.json`) : path.join(path.dirname(uri.fsPath), `${reportName}.weightscope.json`);
           const output = await vscode.window.showSaveDialog({ title: 'Export WeightScope report', defaultUri: vscode.Uri.file(defaultPath), filters: { JSON: ['json'] } });
           if (!output) return;
           const protectedPaths = [model.path, target?.path, ...(model.protectedPaths || []), ...(target?.protectedPaths || [])].filter(Boolean).map(p => path.resolve(p));

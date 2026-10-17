@@ -2,7 +2,7 @@
 
 A local VS Code extension for inspecting model checkpoints and answering **what changed, and are the weights healthy?** Original checkpoints stay unchanged.
 
-Open `.safetensors`, `.gguf`, `.onnx`, `.pt`, or `.pth` files, or select a downloaded Ollama model from its local catalog. Explore a layer tree, shapes, stored parameter counts, dtype distribution, quantization metadata, tensor statistics, and checkpoint differences. Inspection and analysis run on demand. There are no uploads, network requests, or telemetry in the extension.
+Open `.safetensors` (single-file or sharded), `.gguf`, `.onnx`, `.pt`, or `.pth` files, or select a downloaded Ollama model from its local catalog. Explore a layer tree, shapes, stored parameter counts, dtype distribution, quantization metadata, tensor statistics, and checkpoint differences. Inspection and analysis run on demand. There are no uploads, network requests, or telemetry in the extension.
 
 ![Model overview with aligned layer size bars](docs/images/layer-overview.jpg)
 
@@ -11,7 +11,7 @@ Open `.safetensors`, `.gguf`, `.onnx`, `.pt`, or `.pth` files, or select a downl
 ## Install
 
 1. Clone this repository and run `npm ci`, then `npm run package` (Node.js 22 or newer is required for the packaging tools).
-2. In VS Code, run **Extensions: Install from VSIX…** and select the generated `artifacts/weightscope-0.3.0.vsix`.
+2. In VS Code, run **Extensions: Install from VSIX…** and select the generated `artifacts/weightscope-0.3.1.vsix`.
 3. Open a supported model file, or run **WeightScope: Inspect Model**.
 
 If another extension owns these file types, use **Reopen Editor With… → WeightScope**. Requires VS Code 1.90 or newer. Works locally and with Remote SSH when the extension and model are on the remote host.
@@ -29,9 +29,19 @@ The tensor difference drawer overlays baseline bars and a target line with ident
 
 **Browse tree** opens the tensor name hierarchy. **More columns** reveals exact values and storage bytes. **Tools** contains refresh, JSON export, and Python setup. **Model details** holds full metadata and precision distribution.
 
+## Open sharded Hugging Face checkpoints
+
+Large Hugging Face models ship as `model-00001-of-0000N.safetensors` shards plus a `model.safetensors.index.json` index. Open the index or **any shard**: WeightScope reads every shard's header and presents one checkpoint, with combined totals, layer groups, statistics, and comparisons. Sharded checkpoints compare with each other and with single-file, GGUF, ONNX, PyTorch, and Ollama checkpoints. Only shard headers are read when opening; numerical analysis reads each tensor from its own shard.
+
+The index must sit next to its shards and may only name `.safetensors` files in that folder. Hugging Face cache snapshots (`models--<owner>--<name>/snapshots/<revision>`) work in place, including their symlinked blobs, and are named after the repository. **Model details → Safetensors shards** lists each shard with its tensor count and size, and the tensor inspector names the shard that stores each tensor.
+
+Any index name ending in `.safetensors.index.json` is supported, such as `diffusion_pytorch_model.safetensors.index.json`. If the index is missing but every shard is present, shards are grouped by file name, with a note. An index that is invalid, names a missing shard, or disagrees with the shard headers (a listed tensor is absent, stored in a different shard, or duplicated) is reported as an error when you open the index. Opening one of its shards instead shows that shard alone, with a note that totals and comparisons cover only that file. Tensors stored in shards but missing from the weight map are included, with a note. To view an index as JSON, use **Reopen Editor With… → Text Editor**.
+
 ## Open downloaded Ollama models
 
 Run **WeightScope: Open Ollama Model** from the Command Palette (`Cmd+Shift+P` on macOS, `Ctrl+Shift+P` on Windows/Linux), then select a model/tag. The picker reads the local catalog and opens the original weights in place. Ollama does not need to be running, and no rename, copy, download, or model execution is needed.
+
+You can also open a tag file directly under `<store>/manifests/<registry>/<namespace>/<model>/<tag>`, such as `~/.ollama/models/manifests/registry.ollama.ai/library/tev1/4b`. WeightScope resolves this small JSON manifest to its downloaded weight blobs. If the file is already open as JSON, use **Reopen Editor With… → WeightScope**, or select the model with **WeightScope: Open Ollama Model**.
 
 Both GGUF model blobs and newer safetensors tensor blobs are supported. Manifest tensor names are retained, including image model namespaces and shared weight aliases. Local manifest-list references resolve to a downloaded variant, preferring GGUF when available. Model names, tags, registry, prompt template, system prompt, generation parameters, licenses, and small model configurations appear under **Model details → Ollama source & prompt settings**. Additional adapter/projector files are listed separately and excluded from primary weight totals.
 
@@ -59,13 +69,13 @@ Layer groups follow the first numbered module in tensor names, or the enclosing 
 
 **Tools → Save checkpoint as…** streams a complete copy to a temporary file, validates its tensor structure, and publishes it under a new name. Existing files and aliases are never overwritten. Cancellation and validation failures remove the temporary file. Memory usage stays bounded while copying large models.
 
-Single-file safetensors, GGUF (including downloaded Ollama GGUF blobs), ONNX, and supported PyTorch checkpoints retain their format. PyTorch validation requires the same trusted workspace and interpreter as inspection. ONNX files with external weights must stay in the original directory to preserve relative references; external weights are shared, not copied. Multi-blob Ollama safetensors export is not supported.
+Single-file safetensors, GGUF (including downloaded Ollama GGUF blobs), ONNX, and supported PyTorch checkpoints retain their format. PyTorch validation requires the same trusted workspace and interpreter as inspection. ONNX files with external weights must stay in the original directory to preserve relative references; external weights are shared, not copied. Multi-blob Ollama safetensors and sharded safetensors export are not supported; copy the model folder to duplicate a sharded checkpoint.
 
 ## Format support
 
 | Format | Metadata / tree | Numerical analysis | Runtime |
 | --- | --- | --- | --- |
-| safetensors | Shapes, counts, dtypes, metadata, validated ranges | F64/F32/F16/BF16, supported FP8, integers, boolean | Native Node.js, bundled with VS Code |
+| safetensors | Single files or Hugging Face shards with an index: shapes, counts, dtypes, metadata, validated ranges | F64/F32/F16/BF16, supported FP8, integers, boolean | Native Node.js, bundled with VS Code |
 | Ollama MXFP8 safetensors | Stored U32 layout and logical shape/count, scale reference, block metadata | Sampled dequantized E4M3FN × E8M0 values and cross-format comparisons | Native Node.js; no MLX/Python dependency |
 | GGUF | Little-endian v2/v3, tensor metadata, quantization blocks, effective bits per weight | Plain scalar types, Q4_0/Q4_1/Q5_0/Q5_1/Q8_0, Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/Q8_K | Native Node.js |
 | ONNX | Initializers, tensor-valued Constant operators, nested graphs, quantization annotations, metadata, operator list | Common scalar raw and typed storage, external weights confined to the model directory | Native streaming protobuf reader; no Python |
@@ -126,7 +136,7 @@ npm run preview
 npm run package
 ```
 
-Open this folder in VS Code and press **F5** to start the Extension Development Host. Open one of the generated files in `examples/`. The browser preview at `http://127.0.0.1:4173` runs the same frontend against real synthetic safetensors checkpoints. Add `?ollama=1` for the generated Ollama catalog demo. File dialogs, the catalog picker, export, and cancellation belong to the VS Code integration.
+Open this folder in VS Code and press **F5** to start the Extension Development Host. Open one of the generated files in `examples/`, or a shard in `examples/tiny-transformer-sharded/`. The browser preview at `http://127.0.0.1:4173` runs the same frontend against real synthetic safetensors checkpoints. Add `?ollama=1` for the generated Ollama catalog demo, or `?sharded=1` for the same weights as a three-shard checkpoint. File dialogs, the catalog picker, export, and cancellation belong to the VS Code integration.
 
 Framework integration verification is optional and uses an isolated environment:
 

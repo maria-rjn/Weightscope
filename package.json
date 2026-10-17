@@ -2,7 +2,7 @@
   "name": "weightscope",
   "displayName": "WeightScope — Model & Checkpoint Inspector",
   "description": "Inspect model layers, tensor health, precision and checkpoint drift locally, on demand.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "weightscope-local",
   "license": "MIT",
   "repository": {
@@ -23,6 +23,8 @@
   ],
   "keywords": [
     "safetensors",
+    "sharded",
+    "huggingface",
     "checkpoint",
     "gguf",
     "onnx",
@@ -85,6 +87,12 @@
           },
           {
             "filenamePattern": "*.pth"
+          },
+          {
+            "filenamePattern": "*.safetensors.index.json"
+          },
+          {
+            "filenamePattern": "**/manifests/*/*/*/*"
           }
         ],
         "priority": "default"
@@ -94,7 +102,7 @@
       "explorer/context": [
         {
           "command": "weightscope.open",
-          "when": "resourceExtname =~ /\\.(safetensors|gguf|onnx|pt|pth)$/",
+          "when": "resourceExtname =~ /\\.(safetensors|gguf|onnx|pt|pth)$/ || resourceFilename =~ /\\.safetensors\\.index\\.json$/",
           "group": "navigation"
         }
       ]

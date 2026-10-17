@@ -26,11 +26,12 @@ The visualization update replaces overview cards with aligned size bars and comp
 
 Cross-format comparison pairs a GGUF file with its Hugging Face source, so quantization error can be measured per layer. Names are translated using llama.cpp's conventions for known architectures. Conversion steps that move or offset values (rotary Q/K permutation, Gemma's norm offset, stacked experts) are reversed explicitly and shown on each tensor; unknown architectures fall back to exact names with an explanation rather than guessing.
 
+Sharded Hugging Face safetensors checkpoints open as one model from their index or any shard, so drift analysis works on multi-gigabyte models without merging files. Index weight maps are checked against shard headers; inconsistent sets fail explicitly instead of silently comparing a partial model.
+
 Explicit boundaries keep results trustworthy: name hierarchy is not a recovered execution graph; stored-element counts are not unique trainable counts; sample matches are not exact equality. Unsupported numerical decoders produce clear explanations rather than fabricated values.
 
 ## Candidate next releases
 
-- Sharded safetensors indexes and aggregate model inspection.
 - GGUF IQ and newer quantization decoders.
 - LoRA-aware comparison and user-configurable tensor-name mapping beyond the built-in Hugging Face ↔ GGUF translation.
 - Full-tensor streaming comparisons and checksums for exact verification.

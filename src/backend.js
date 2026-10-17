@@ -9,12 +9,13 @@ const { parseONNX, varint } = require('./parsers/onnx');
 const { statistics, difference, structureRow, structureDiff } = require('./math');
 const { pairTensors, sourceIndex } = require('./tensor-names');
 const ollama = require('./ollama');
+const sharded = require('./sharded');
 const mxfp8 = require('./quantization/mxfp8');
 
 function identity(s) { return `${s.size}:${s.mtimeMs}:${s.ctimeMs}:${s.ino}`; }
 async function assertCurrent(model) {
   if (identity(await fs.stat(model.path)) !== model.identity) throw new Error('The checkpoint changed on disk. Refresh the inspector before analyzing it.');
-  for (const item of model.dependencies || []) if (identity(await fs.stat(item.path)) !== item.identity) throw new Error('An Ollama manifest changed on disk. Refresh the inspector before analyzing it.');
+  for (const item of model.dependencies || []) if (identity(await fs.stat(item.path)) !== item.identity) throw new Error(`${model.source?.kind === 'sharded' ? 'The safetensors index' : 'An Ollama manifest'} changed on disk. Refresh the inspector before analyzing it.`);
 }
 function summarize(model) {
   const dtypes = Object.create(null);
@@ -62,6 +63,17 @@ function pythonRequest(request, options = {}) {
 async function inspect(file, options = {}) {
   cancelled(options.signal);
   if (ollama.manifestLocation(file)) return inspectOllama(file, options);
+  // Opening any shard opens the whole checkpoint. A shard whose set cannot be assembled still opens on its own.
+  try { const set = await sharded.locate(file); if (set) return await inspectSharded(file, set, options); }
+  catch (e) {
+    if (sharded.isIndex(file) || options.signal?.aborted) throw e;
+    const model = await inspectFile(file, options);
+    model.warnings.push(`Showing this shard only: ${e.message} Totals and comparisons cover this file alone.`);
+    return model;
+  }
+  return inspectFile(file, options);
+}
+async function inspectFile(file, options = {}) {
   const stat = await fs.stat(file);
   if (!stat.isFile()) throw new Error('Choose a model file, not a directory.');
   const ext = path.extname(file).toLowerCase();
@@ -74,7 +86,7 @@ async function inspect(file, options = {}) {
       else if (ext === '.gguf') parsed = await parseGGUF(reader);
       else if (ext === '.onnx') parsed = await parseONNX(reader);
       else if (reader.size >= 4 && (await reader.read(0, 4)).toString('ascii') === 'GGUF') parsed = await parseGGUF(reader);
-      else throw new Error('Supported model files: .safetensors, .gguf, .onnx, .pt, .pth, or a GGUF blob. Use Open Ollama Model for downloaded models.');
+      else throw new Error('Supported model files: .safetensors (or a sharded .safetensors.index.json), .gguf, .onnx, .pt, .pth, or a GGUF blob. Use Open Ollama Model for downloaded models.');
     } finally { await reader.close(); }
   }
   const model = { ...parsed, path: file, identity: identity(stat), fileBytes: stat.size };
@@ -99,7 +111,7 @@ async function inspectOllama(file, options) {
     for (const layer of entry.layers.filter(l => l.kind === 'tensor')) {
       cancelled(options.signal);
       let shard = shards.get(layer.path);
-      if (!shard) { shard = await inspect(layer.path, { ...options, format: 'safetensors' }); shards.set(layer.path, shard); fileBytes = safeInteger(fileBytes + shard.fileBytes, 'Ollama weight bytes'); }
+      if (!shard) { shard = await inspectFile(layer.path, { ...options, format: 'safetensors' }); shards.set(layer.path, shard); fileBytes = safeInteger(fileBytes + shard.fileBytes, 'Ollama weight bytes'); }
       metadata.blobs.push({ name: layer.name, digest: layer.digest, metadata: shard.metadata });
       for (const tensor of shard.tensors) {
         const name = tensor.name === 'data' && typeof layer.name === 'string' && layer.name ? layer.name : tensor.name;
@@ -143,6 +155,37 @@ async function inspectOllama(file, options) {
   model.protectedPaths = ollama.protectedPaths(entry); model.dependencies = dependencies;
   model.warnings.push(...(model.source.warnings || []));
   if (model.source.extraWeights.length) model.warnings.push('Adapter/projector blobs are listed in Model details; totals and analysis cover the primary weights only.');
+  await assertCurrent(model);
+  return model;
+}
+async function inspectSharded(file, set, options) {
+  const missing = await sharded.missingFiles(set.directory, set.files);
+  if (missing.length) throw new Error(`${missing.length} of ${set.files.length} shards listed in ${set.indexPath ? path.basename(set.indexPath) : 'this set'} are missing, including ${missing[0]}. The download may be incomplete.`);
+  const tensors = [], shards = [], stored = new Map(), warnings = [...set.warnings];
+  const dependencies = set.indexPath ? [{ path: set.indexPath, identity: identity(await fs.stat(set.indexPath)) }] : [];
+  let fileBytes = 0, unindexed = 0;
+  for (const name of set.files) {
+    cancelled(options.signal);
+    const shard = await inspectFile(path.join(set.directory, name), { ...options, format: 'safetensors' });
+    fileBytes = safeInteger(fileBytes + shard.fileBytes, 'Total shard bytes');
+    shards.push({ file: name, path: shard.path, bytes: shard.fileBytes, tensors: shard.tensors.length, metadata: shard.metadata });
+    for (const tensor of shard.tensors) {
+      if (stored.has(tensor.name)) throw new Error(`Tensor ${tensor.name} is stored in both ${stored.get(tensor.name)} and ${name}.`);
+      stored.set(tensor.name, name);
+      const listed = set.weightMap?.get(tensor.name);
+      if (set.weightMap && listed === undefined) unindexed++;
+      else if (listed !== undefined && listed !== name) throw new Error(`The index maps ${tensor.name} to ${listed}, but it is stored in ${name}.`);
+      // Each tensor records its own shard, so analysis reads and change checks touch only that file.
+      tensors.push({ ...tensor, shard: name, storage: { ...tensor.storage, file: shard.path, identity: shard.identity } });
+    }
+  }
+  for (const [name, listed] of set.weightMap || []) if (!stored.has(name)) throw new Error(`The index lists ${name} in ${listed}, but that shard does not contain it.`);
+  if (unindexed) warnings.push(`${unindexed} stored tensor(s) are missing from the index weight_map. They are shown here, but loaders that follow the index may ignore them.`);
+  const model = { format: 'safetensors', tensors, warnings, path: file, identity: identity(await fs.stat(file)), fileBytes, dependencies,
+    metadata: { index: set.indexPath ? set.metadata : null, shards: shards.map(({ file, metadata }) => ({ file, metadata })) },
+    source: { kind: 'sharded', name: set.name, indexPath: set.indexPath, shards: shards.map(({ metadata, ...shard }) => shard) },
+    protectedPaths: [...dependencies.map(d => d.path), ...shards.map(s => s.path)] };
+  model.summary = summarize(model); model.byName = new Map(tensors.map(t => [t.name, t]));
   await assertCurrent(model);
   return model;
 }
@@ -251,7 +294,8 @@ async function sampleAt(model, name, windows, options = {}) {
     const external = tensor.storage.kind === 'external' ? await externalStorage(model, tensor) : null;
     const current = external?.tensor || tensor;
     const storageFile = tensor.storage.file;
-    if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error('An Ollama weight blob changed on disk. Refresh the inspector before analyzing it.');
+    const blob = model.source?.kind === 'sharded' ? `Shard ${tensor.shard}` : 'An Ollama weight blob';
+    if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error(`${blob} changed on disk. Refresh the inspector before analyzing it.`);
     const scale = tensor.storage.scale;
     if (scale && identity(await fs.stat(scale.file)) !== scale.identity) throw new Error('An Ollama scale blob changed on disk. Refresh the inspector before analyzing it.');
     const reader = await Reader.open(external?.file || storageFile || model.path, options.signal);
@@ -263,7 +307,7 @@ async function sampleAt(model, name, windows, options = {}) {
         values = await mxfp8.sample(reader, scaleReader, current, windows);
       } else values = current.storage.kind === 'onnx-typed' ? await typedValues(reader, current, windows) : await rawValues(reader, current, windows);
       if (external && identity(await fs.stat(external.file)) !== external.identity) throw new Error('External ONNX weights changed during analysis. Retry the operation.');
-      if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error('An Ollama weight blob changed during analysis. Refresh the inspector.');
+      if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error(`${blob} changed during analysis. Refresh the inspector.`);
       if (scale && identity(await fs.stat(scale.file)) !== scale.identity) throw new Error('An Ollama scale blob changed during analysis. Refresh the inspector.');
     } finally { if (scaleReader && scaleReader !== reader) await scaleReader.close(); await reader.close(); }
   }

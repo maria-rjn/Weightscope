@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Compare GGUF files with the Hugging Face safetensors or PyTorch checkpoint they were converted from. Tensor names are translated to llama.cpp's GGUF names for supported architectures, Q/K rows permuted into llama.cpp's rotary layout are restored using the GGUF head counts, Gemma's `1 + w` norm offset is removed, and stacked GGUF experts are compared per expert. The drawer shows both tensor names and each reversed step; unsupported architectures keep exact-name matching with an explanation.
+- Open sharded Hugging Face safetensors checkpoints as one model from the `.safetensors.index.json` index or any `-0000X-of-0000N` shard, including Hugging Face cache snapshots. Totals, layer groups, statistics, and drift comparisons cover every shard.
+- Validate index weight maps against shard headers. Report missing shards, misplaced or duplicate tensors, and file names outside the model folder. Group complete shard sets that have no index by file name.
+- Show shard counts, a per-shard table, and each tensor's shard. Detect index and shard changes before analysis, and protect every shard from report overwrites.
+
 - Align model layer size bars on a shared scale, with stored-value and storage-byte measures and explicit unknown sizes.
 - Replace comparison cards with a searchable, paginated layer-by-tensor-role heatmap of relative L2 drift, preserving structural, precision, non-finite, and sampling states.
 - Add labeled SVG distributions, accessible bin-count tables, and baseline/target overlays computed with shared bins from the existing samples.
@@ -12,6 +16,11 @@
 - Show logical dimensions and weight counts in the tensor inspector while preserving stored shapes, counts, and dtypes in model summaries and exports.
 - Honor per-tensor quantization metadata in mixed blobs and keep scale tensors and unquantized floating-point tensors available for inspection.
 - Explain missing scales, incompatible block layouts, and unsupported packed formats without computing misleading statistics.
+
+## 0.3.1
+
+- Open Ollama tag manifests directly in the WeightScope inspector instead of the JSON editor.
+- Document how to switch an already-open JSON manifest to the inspector.
 
 ## 0.3.0
 
