@@ -14,9 +14,8 @@ Open `.safetensors` (single-file or sharded), `.gguf`, `.onnx`, `.pt`, or `.pth`
 
 ## Install
 
-1. Clone this repository and run `npm ci`, then `npm run package` (Node.js 22 or newer is required for the packaging tools).
-2. In VS Code, run **Extensions: Install from VSIX…** and select the generated `artifacts/weightscope-0.5.0.vsix`.
-3. Click the **WeightScope** icon in the Activity Bar. The **Start** view has buttons to inspect a model file, open an Ollama model, or compare checkpoints, so you don't need a model open first. You can also open a supported model file from the Explorer, or run any **WeightScope** command from the Command Palette.
+1. In VS Code, open the Extensions view, search for **WeightScope**, and click **Install**. You can also run `code --install-extension MariaRajabzadeh.weightscope`.
+2. Click the **WeightScope** icon in the Activity Bar. The **Start** view has buttons to inspect a model file, open an Ollama model, or compare checkpoints, so you don't need a model open first. You can also open a supported model file from the Explorer, or run any **WeightScope** command from the Command Palette.
 
 If another extension owns these file types, use **Reopen Editor With… → WeightScope**. Requires VS Code 1.90 or newer. Works locally and with Remote SSH when the extension and model are on the remote host.
 
@@ -152,7 +151,7 @@ npm run screenshots
 npm run package
 ```
 
-Open this folder in VS Code and press **F5** to start the Extension Development Host. Open one of the generated files in `examples/`, or a shard in `examples/tiny-transformer-sharded/`. The browser preview at `http://127.0.0.1:4173` runs the same frontend against real synthetic safetensors checkpoints. Add `?ollama=1` for the generated Ollama catalog demo, or `?sharded=1` for the same weights as a three-shard checkpoint. File dialogs, the catalog picker, export, and cancellation belong to the VS Code integration.
+`npm run package` writes `artifacts/weightscope-<version>.vsix` (Node.js 22 or newer is required for the packaging tools); install it with **Extensions: Install from VSIX…**. Open this folder in VS Code and press **F5** to start the Extension Development Host. Open one of the generated files in `examples/`, or a shard in `examples/tiny-transformer-sharded/`. The browser preview at `http://127.0.0.1:4173` runs the same frontend against real synthetic safetensors checkpoints. Add `?ollama=1` for the generated Ollama catalog demo, or `?sharded=1` for the same weights as a three-shard checkpoint. File dialogs, the catalog picker, export, and cancellation belong to the VS Code integration.
 
 `npm run screenshots` regenerates the README images from the same preview with headless Chrome (set `CHROME_PATH` if Chrome is not in its default location). Point it at real checkpoints: `WEIGHTSCOPE_SHOT_MODEL` for the Explore images, `WEIGHTSCOPE_PREVIEW_BASE` and `WEIGHTSCOPE_PREVIEW_TARGET` for the drift map, and optionally `WEIGHTSCOPE_SHOT_TENSOR` for the weight image. The images above used Ollama `translategemma:4b` and the `model.safetensors` files of [HuggingFaceTB/SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M) and [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct), saved under their model names. Without them, it falls back to the synthetic demo checkpoints.
 
@@ -170,4 +169,4 @@ On Windows, use the environment's `Scripts/python.exe`. The test suite covers co
 
 Hugging Face ↔ GGUF name translation and the reversed conversion steps follow llama.cpp's [`convert_hf_to_gguf.py` model conversions](https://github.com/ggml-org/llama.cpp/tree/master/conversion) and [gguf-py tensor name map](https://github.com/ggml-org/llama.cpp/blob/master/gguf-py/gguf/tensor_mapping.py). Parsers follow the upstream [safetensors specification](https://github.com/safetensors/safetensors#format), [GGUF specification](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md), [GGML quantization layouts](https://github.com/ggml-org/ggml/blob/master/src/ggml-common.h), and [ONNX protobuf definitions](https://github.com/onnx/onnx/blob/main/onnx/onnx.proto3). Ollama MXFP8 decoding follows [Ollama's packing and block parameters](https://github.com/ollama/ollama/blob/main/mlx/quant/quant.go), [companion naming and quantization metadata](https://github.com/ollama/ollama/blob/main/create/quantize.go), and the [OCP Microscaling Formats specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf). VS Code integration uses its [Custom Editor API](https://code.visualstudio.com/api/extension-guides/custom-editors).
 
-MIT licensed. The local package uses a placeholder publisher ID; Marketplace publication requires an owned publisher ID and release metadata.
+MIT licensed.
