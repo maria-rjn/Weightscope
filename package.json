@@ -3,7 +3,7 @@
   "displayName": "WeightScope — Safetensors, GGUF & Checkpoint Inspector",
   "description": "Inspect model layers, tensor health, precision and checkpoint drift locally, on demand.",
   "version": "0.5.0",
-  "publisher": "weightscope-local",
+  "publisher": "MariaRajabzadeh",
   "icon": "media/icon.png",
   "license": "MIT",
   "repository": {
