@@ -37,6 +37,7 @@ test('extension activation, webview handshake, stats, comparison, export and che
     const doc = provider.openCustomDocument(uri(base)); provider.resolveCustomEditor(doc, panel);
     assert.match(panel.webview.html, /Content-Security-Policy/); assert.match(panel.webview.html, /nonce-/);
     assert.ok(panel.webview.html.indexOf('model-view.js') < panel.webview.html.indexOf('app.js'));
+    assert.ok(panel.webview.html.indexOf('help.js') < panel.webview.html.indexOf('app.js'));
     assert.ok(commands.has('weightscope.compare'));
     assert.equal(startView.id, 'weightscope.start'); assert.deepEqual(await startView.p.getChildren(), []);
     await receive({ type: 'ready' }); assert.equal(posts.find(m => m.type === 'model').model.summary.parameters, 2);

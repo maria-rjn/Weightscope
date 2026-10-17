@@ -29,10 +29,10 @@ async function main() {
         const mock = `let previewOllama=${isOllama},previewSharded=${isSharded};window.acquireVsCodeApi=()=>({getState:()=>({}),setState:()=>{},postMessage:async m=>{try{if(m.type==='openOllama')previewOllama=true;const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...m,previewOllama,previewSharded})});for(const data of await r.json())window.dispatchEvent(new MessageEvent('message',{data}));}catch(e){window.dispatchEvent(new MessageEvent('message',{data:{type:'error',message:e.message}}));}}});`;
         const nonce = crypto.randomBytes(24).toString('base64');
         res.setHeader('Content-Security-Policy', `default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'nonce-${nonce}'; connect-src 'self'`);
-        res.setHeader('Content-Type', 'text/html'); res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WeightScope Preview</title><link rel="stylesheet" href="/styles.css"></head><body><div id="app"></div><script nonce="${nonce}">${mock}</script><script nonce="${nonce}" src="/model-view.js"></script><script nonce="${nonce}" src="/app.js"></script></body></html>`);
+        res.setHeader('Content-Type', 'text/html'); res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WeightScope Preview</title><link rel="stylesheet" href="/styles.css"></head><body><div id="app"></div><script nonce="${nonce}">${mock}</script><script nonce="${nonce}" src="/model-view.js"></script><script nonce="${nonce}" src="/help.js"></script><script nonce="${nonce}" src="/app.js"></script></body></html>`);
       } else if (req.method === 'GET' && route === '/favicon.ico') {
         res.writeHead(204); res.end();
-      } else if (req.method === 'GET' && ['/styles.css', '/model-view.js', '/app.js', '/icon.png'].includes(route)) {
+      } else if (req.method === 'GET' && ['/styles.css', '/model-view.js', '/help.js', '/app.js', '/icon.png'].includes(route)) {
         res.setHeader('Content-Type', route.endsWith('.png') ? 'image/png' : route.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(await fs.readFile(path.join(__dirname, '..', 'media', route.slice(1))));
       } else if (req.method === 'POST' && route === '/action') {
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 2 * 1024 * 1024) throw new Error('Request too large.'); }

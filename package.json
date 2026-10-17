@@ -131,7 +131,7 @@
     "viewsWelcome": [
       {
         "view": "weightscope.start",
-        "contents": "Inspect a local checkpoint: .safetensors, .gguf, .onnx, .pt, .pth, or a sharded Hugging Face index.\n[Inspect Model File…](command:weightscope.open)\nOpen a model you downloaded with Ollama. Ollama does not need to be running.\n[Open Ollama Model…](command:weightscope.openOllama)\nCompare a baseline with a target to see which tensors changed.\n[Compare Checkpoints…](command:weightscope.compare)\n[Compare Ollama Models…](command:weightscope.compareOllama)\nYou can also open a model file from the Explorer. PyTorch .pt and .pth files need a trusted workspace and [Python with PyTorch](command:weightscope.setup)."
+        "contents": "Inspect a local checkpoint: .safetensors, .gguf, .onnx, .pt, .pth, or a sharded Hugging Face index.\n[Inspect Model File…](command:weightscope.open)\nOpen a model you downloaded with Ollama. Ollama does not need to be running.\n[Open Ollama Model…](command:weightscope.openOllama)\nCompare a baseline with a target to see which tensors changed.\n[Compare Checkpoints…](command:weightscope.compare)\n[Compare Ollama Models…](command:weightscope.compareOllama)\nYou can also open a model file from the Explorer. PyTorch .pt and .pth files need a trusted workspace and [Python with PyTorch](command:weightscope.setup).\nEvery section of the inspector has a ? button that explains what it shows, how to read it and how its numbers are computed. The Guide tab collects every explanation."
       }
     ],
     "menus": {
@@ -170,7 +170,7 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Absolute tolerance when classifying numerical checkpoint differences."
+          "description": "Absolute tolerance when comparing checkpoints: paired values that differ by this much or less count as equal. 0 counts any difference as a change."
         },
         "weightscope.ollamaModelsPath": {
           "type": "string",

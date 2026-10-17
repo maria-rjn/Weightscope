@@ -23,7 +23,7 @@ function html(webview, root) {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;">
     <link rel="stylesheet" href="${media('styles.css')}"><title>WeightScope</title></head><body>
-    <div id="app"></div><script nonce="${nonce}" src="${media('model-view.js')}"></script><script nonce="${nonce}" src="${media('app.js')}"></script></body></html>`;
+    <div id="app"></div><script nonce="${nonce}" src="${media('model-view.js')}"></script><script nonce="${nonce}" src="${media('help.js')}"></script><script nonce="${nonce}" src="${media('app.js')}"></script></body></html>`;
 }
 function activate(context) {
   const panels = new Map(), pending = new Map();
