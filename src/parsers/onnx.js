@@ -18,13 +18,14 @@ async function* fields(reader, start, length) {
   if (end > reader.size) throw new Error('ONNX protobuf field extends outside the file.');
   let pos = start, count = 0;
   while (pos < end) {
+    const fieldStart = pos;
     if (++count > 2000000) throw new Error('ONNX message has too many fields.');
     const key = await varint(reader, pos, end); pos = key.pos;
     const tag = safeInteger(key.value), no = Math.floor(tag / 8), wire = tag & 7;
     if (!no || no > 536870911) throw new Error('Invalid ONNX protobuf field number.');
     if (wire === 0) {
       const result = await varint(reader, pos, end); pos = result.pos;
-      yield { no, wire, value: result.value }; continue;
+      yield { no, wire, value: result.value, fieldStart, end: pos }; continue;
     }
     let size;
     if (wire === 1) size = 8;
@@ -32,7 +33,7 @@ async function* fields(reader, start, length) {
     else if (wire === 2) { const result = await varint(reader, pos, end); pos = result.pos; size = safeInteger(result.value, 'ONNX field length'); }
     else throw new Error(`Unsupported protobuf wire type ${wire}.`);
     if (pos + size > end) throw new Error('Truncated ONNX protobuf field.');
-    yield { no, wire, start: pos, length: size };
+    yield { no, wire, start: pos, length: size, fieldStart, end: pos + size };
     pos += size;
   }
 }

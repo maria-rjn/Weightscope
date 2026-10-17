@@ -48,8 +48,13 @@ async function parseGGUF(reader) {
   }
   const tensorCount = await u64(), kvCount = await u64();
   if (tensorCount > 200000 || kvCount > 200000) throw new Error('GGUF header entry count exceeds the limit.');
-  const metadata = Object.create(null), tensors = [], warnings = [];
-  for (let i = 0; i < kvCount; i++) { const key = await string(); metadata[key] = await value(await u32()); }
+  const metadata = Object.create(null), tensors = [], warnings = [], metadataEntries = [];
+  for (let i = 0; i < kvCount; i++) {
+    const start = pos, key = await string(), type = await u32();
+    if (Object.hasOwn(metadata, key)) throw new Error(`Duplicate GGUF metadata key: ${key}`);
+    metadata[key] = await value(type); metadataEntries.push({ key, type, start, end: pos });
+  }
+  const tensorInfoStart = pos;
   const names = new Set();
   for (let i = 0; i < tensorCount; i++) {
     const name = await string(), dims = await u32();
@@ -76,7 +81,8 @@ async function parseGGUF(reader) {
   for (let i = 1; i < ranges.length; i++) if (ranges[i].storage.offset < ranges[i - 1].storage.offset + ranges[i - 1].bytes) throw new Error('Overlapping GGUF tensor data.');
   if (tensors.some(t => t.bytes === null)) warnings.push('Unknown or version-dependent GGML block layouts have unavailable byte sizes and statistics (including Q8_1).');
   if (tensors.some(t => t.quantization && !t.quantization.decoded)) warnings.push('IQ and newer quantization types expose metadata; numerical decoding is available for Q4_0/1, Q5_0/1, Q8_0, and Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/Q8_K.');
-  return { format: 'gguf', tensors, metadata: { version, ...metadata }, warnings };
+  return { format: 'gguf', tensors, metadata: { version, ...metadata }, warnings,
+    layout: { metadataEntries, tensorInfoStart, tensorInfoEnd: pos, dataStart, alignment } };
 }
 function decodeBlock(b, dtype, index) {
   if (!DECODED.has(dtype)) throw new Error(`Numerical decoding for ${dtype} is not implemented. Quantization metadata remains available.`);
