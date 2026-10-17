@@ -40,10 +40,11 @@ test('extension activation, webview handshake, stats, comparison, export and che
     await receive({ type: 'ready' }); assert.equal(posts.find(m => m.type === 'model').model.summary.parameters, 2);
     await receive({ type: 'stats', name: 'layer.weight' }); assert.equal(posts.find(m => m.type === 'statistics').data.mean, 1.5);
     await receive({ type: 'compare' }); assert.equal(posts.find(m => m.type === 'comparison').rows[0].status, 'unverified');
+    assert.equal(posts.find(m => m.type === 'comparison').matching.kind, 'exact');
     await receive({ type: 'analyzeDiff' }); assert.equal(posts.find(m => m.type === 'diffRow').row.metrics.maxAbs, 1);
     assert.equal(posts.find(m => m.type === 'statistics').data.histogramRange.min, 1);
     assert.equal(posts.find(m => m.type === 'diffRow').row.metrics.distributions.max, 3);
-    await receive({ type: 'export' }); const report = JSON.parse(await fs.readFile(saveFile, 'utf8')); assert.equal(report.comparison.rows[0].status, 'changed');
+    await receive({ type: 'export' }); const report = JSON.parse(await fs.readFile(saveFile, 'utf8')); assert.equal(report.comparison.rows[0].status, 'changed'); assert.match(report.comparison.matching.description, /matched exactly/);
     assert.equal(report.comparison.rows[0].metrics.distributions.baseline.reduce((a, b) => a + b, 0), 2);
     saveFile = base; await receive({ type: 'export' }); assert.match(posts.at(-1).message, /cannot overwrite/);
     saveFile = path.join(dir, 'alias.json'); await fs.symlink(base, saveFile); await receive({ type: 'export' }); assert.match(posts.at(-1).message, /symlink/);

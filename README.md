@@ -59,6 +59,7 @@ Layer groups follow the first numbered module in tensor names, or the enclosing 
 - See tensor shapes, stored elements, storage bytes, precision distribution, and model metadata.
 - Analyze a selected tensor: min, max, mean, population standard deviation, RMS, zero fraction, NaN/Inf counts, and histogram.
 - Compare a baseline and target checkpoint by tensor name. Detect added/removed tensors, changed shapes, and changed dtypes immediately.
+- Compare a GGUF file with the Hugging Face checkpoint it was converted from, layer by layer, to measure quantization error. See [GGUF and Hugging Face checkpoints](#gguf-and-hugging-face-checkpoints).
 - Analyze numerical differences for one tensor or a batch: mean absolute delta, maximum absolute delta, RMSE, relative L2, cosine similarity, changed-value count, and non-finite mismatches. The tensor difference drawer and JSON report contain the full metrics.
 - Export a JSON report containing metadata, computed statistics, comparison results, coverage, and tolerance.
 - View ONNX operators and input/output names.
@@ -97,6 +98,18 @@ Statistics use up to 32 evenly spaced contiguous windows across flattened row-ma
 Comparisons use identical logical sample positions across formats. **Sample matches** means no differences were found in analyzed positions; it does not prove whole-tensor equality. **Full match** means every value was compared and agreed within tolerance. The JSON status for a full match remains `equal`. Precision changes remain visible even when numerical values match. NaN/Inf pairs are counted separately. Equal NaNs and equal infinities agree for this comparison policy; mismatched non-finite values mark the tensor changed. Relative L2 is undefined for a zero baseline norm, and cosine is undefined for zero norms.
 
 Files changed since inspection must be refreshed before analysis. No background model scans or weight analysis occur.
+
+### GGUF and Hugging Face checkpoints
+
+When one checkpoint is GGUF and the other is a Hugging Face safetensors or PyTorch file, tensor names are translated the way llama.cpp's `convert_hf_to_gguf.py` writes them, for example `model.layers.0.self_attn.q_proj.weight` ↔ `blk.0.attn_q.weight`. This measures what quantization changed in each layer, such as Q4_K or Q8_0 error against the original BF16 weights. Translation applies to these GGUF architectures: `llama` (including Mistral and Mixtral conversions), `granite`, `granitemoe`, `smollm3`, `arcee`, `olmo`, `olmo2`, `qwen2`, `qwen2moe`, `qwen3`, `qwen3moe`, `phi3`, `gemma`, `gemma2`, and `gemma3`.
+
+Value changes made during conversion are reversed before comparing:
+
+- **Rotary Q/K permutation.** For `llama`, `granite`, `granitemoe`, `smollm3`, `arcee`, and `olmo`, the converter reorders query and key rows from Hugging Face's half-split rotary layout to llama.cpp's interleaved layout. WeightScope restores the original order using the GGUF `attention.head_count` (queries) and `attention.head_count_kv` (keys). Without usable head counts, those two tensors are marked unavailable with an explanation instead of reporting false drift.
+- **Gemma norm offset.** Gemma 1–3 GGUF files store RMSNorm weights as `1 + w`; 1 is subtracted from the GGUF values. Adding 1 passed through float32, so a tiny absolute tolerance treats that rounding as a match.
+- **Stacked experts.** `ffn_gate_exps`, `ffn_up_exps`, and `ffn_down_exps` hold every expert in one tensor; each Hugging Face expert is compared with its slice.
+
+Comparison rows use the Hugging Face tensor name. The tensor difference drawer shows both names and every step that was reversed, and search matches either name. Other architectures, ONNX files, and checkpoints in the same format keep exact-name matching; the comparison explains when a GGUF architecture is not supported. Tensors without a counterpart (for example `rope_freqs.weight` or `rotary_emb.inv_freq`) appear as added or removed. Tensors the converter trimmed, such as unused vocabulary rows in Gemma 3 embeddings, appear as shape changes. Fused Hugging Face expert tensors (`mlp.experts.gate_up_proj`) are not split.
 
 ## Settings
 
@@ -137,6 +150,6 @@ On Windows, use the environment's `Scripts/python.exe`. The test suite covers co
 
 ## References
 
-Parsers follow the upstream [safetensors specification](https://github.com/safetensors/safetensors#format), [GGUF specification](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md), [GGML quantization layouts](https://github.com/ggml-org/ggml/blob/master/src/ggml-common.h), and [ONNX protobuf definitions](https://github.com/onnx/onnx/blob/main/onnx/onnx.proto3). Ollama MXFP8 decoding follows [Ollama's packing and block parameters](https://github.com/ollama/ollama/blob/main/mlx/quant/quant.go), [companion naming and quantization metadata](https://github.com/ollama/ollama/blob/main/create/quantize.go), and the [OCP Microscaling Formats specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf). VS Code integration uses its [Custom Editor API](https://code.visualstudio.com/api/extension-guides/custom-editors).
+Hugging Face ↔ GGUF name translation and the reversed conversion steps follow llama.cpp's [`convert_hf_to_gguf.py` model conversions](https://github.com/ggml-org/llama.cpp/tree/master/conversion) and [gguf-py tensor name map](https://github.com/ggml-org/llama.cpp/blob/master/gguf-py/gguf/tensor_mapping.py). Parsers follow the upstream [safetensors specification](https://github.com/safetensors/safetensors#format), [GGUF specification](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md), [GGML quantization layouts](https://github.com/ggml-org/ggml/blob/master/src/ggml-common.h), and [ONNX protobuf definitions](https://github.com/onnx/onnx/blob/main/onnx/onnx.proto3). Ollama MXFP8 decoding follows [Ollama's packing and block parameters](https://github.com/ollama/ollama/blob/main/mlx/quant/quant.go), [companion naming and quantization metadata](https://github.com/ollama/ollama/blob/main/create/quantize.go), and the [OCP Microscaling Formats specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf). VS Code integration uses its [Custom Editor API](https://code.visualstudio.com/api/extension-guides/custom-editors).
 
 MIT licensed. The local package uses a placeholder publisher ID; Marketplace publication requires an owned publisher ID and release metadata.
