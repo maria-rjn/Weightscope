@@ -40,6 +40,8 @@ test('extension activation, webview handshake, stats, comparison, export and che
     assert.ok(commands.has('weightscope.compare'));
     assert.equal(startView.id, 'weightscope.start'); assert.deepEqual(await startView.p.getChildren(), []);
     await receive({ type: 'ready' }); assert.equal(posts.find(m => m.type === 'model').model.summary.parameters, 2);
+    await receive({ type: 'scan' }); assert.deepEqual(posts.filter(m => m.type === 'statistics').map(m => [m.name, m.completed, m.total, m.data.mean]), [['layer.weight', 1, 1, 1.5]]); assert.ok(posts.some(m => m.type === 'scanDone'));
+    await receive({ type: 'scan' }); assert.equal(posts.filter(m => m.type === 'statistics').length, 1, 'scanned tensors are not read again');
     await receive({ type: 'stats', name: 'layer.weight' }); assert.equal(posts.find(m => m.type === 'statistics').data.mean, 1.5);
     await receive({ type: 'compare' }); assert.equal(posts.find(m => m.type === 'comparison').rows[0].status, 'unverified');
     assert.equal(posts.find(m => m.type === 'comparison').matching.kind, 'exact');

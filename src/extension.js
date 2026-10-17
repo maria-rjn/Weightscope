@@ -116,6 +116,18 @@ function activate(context) {
           const data = await backend.tensorStatistics(model, message.name, options); stats.set(message.name, data);
           post({ type: 'statistics', name: message.name, data });
         }),
+        // Samples every tensor not yet analyzed, the same way Analyze weights does, and streams each result.
+        scan: () => run('Scanning weights…', async options => {
+          if (!model) throw new Error('Open a checkpoint first.');
+          const todo = model.tensors.filter(t => !t.analysisUnavailable && !stats.has(t.name));
+          let completed = 0;
+          for (const t of todo) {
+            if (options.signal.aborted) throw new Error('Operation cancelled.');
+            try { const data = await backend.tensorStatistics(model, t.name, options); stats.set(t.name, data); post({ type: 'statistics', name: t.name, data, completed: ++completed, total: todo.length }); }
+            catch (e) { if (options.signal.aborted) throw e; post({ type: 'scanError', name: t.name, message: e.message, completed: ++completed, total: todo.length }); }
+          }
+          post({ type: 'scanDone' });
+        }),
         image: message => run('Drawing weight image…', async options => {
           if (!model?.byName.has(message.name)) throw new Error('Choose a tensor first.');
           const data = await backend.tensorImage(model, message.name, options); images.set(message.name, data);

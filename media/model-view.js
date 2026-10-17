@@ -60,13 +60,27 @@
     const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
     return { groups: [...map.values()].sort((a, b) => natural(a.key, b.key)), roles: [...roles].sort(natural), maxRelativeL2, minRelativeL2: minRelativeL2 === Infinity ? 0 : minRelativeL2 };
   }
-  // Position of a relative L2 value on the shared map scale, from 0 to 1, or null when it has none.
-  // The log scale spans the smallest to the largest positive drift (at most six decades), so small
-  // changes stay visible next to one large outlier. Zero drift is position 0 on both scales.
-  function driftScale(matrix, mode = 'log') {
-    const max = matrix.maxRelativeL2, low = Math.max(matrix.minRelativeL2, max * 1e-6), log = mode === 'log' && max > 0 && low > 0 && low < max;
+  // Position of a non-negative value on a shared scale, from 0 to 1, or null when it has none.
+  // The log scale spans the smallest to the largest positive value (at most six decades), so small
+  // values stay visible next to one large outlier. Zero is position 0 on both scales.
+  function rangeScale(min, max, mode = 'log') {
+    const low = Math.max(min, max * 1e-6), log = mode === 'log' && max > 0 && low > 0 && low < max;
     const position = v => !Number.isFinite(v) || !(max > 0) ? null : v <= 0 ? 0 : Math.min(1, log ? Math.max(0, Math.log(v / low) / Math.log(max / low)) : v / max);
     return { mode: log ? 'log' : 'linear', position, ticks: !(max > 0) ? [] : log ? [low, Math.sqrt(low * max), max] : [0, max / 2, max] };
+  }
+  // Relative L2 drift on one scale shared by every page and filter of a comparison.
+  const driftScale = (matrix, mode = 'log') => rangeScale(matrix.minRelativeL2, matrix.maxRelativeL2, mode);
+  // Stored precision per tensor: decoded schemes by name, everything else by dtype. Bits per value
+  // include block scales, so GGUF Q4_K is 4.5 bits. Kinds sort from the most to the fewest bits.
+  const precisionLabel = t => t.logicalShape != null && t.quantization?.scheme ? t.quantization.scheme.toUpperCase() : t.dtype;
+  function precisionKinds(tensors) {
+    const kinds = new Map();
+    for (const t of tensors) {
+      const label = precisionLabel(t), k = kinds.get(label) || { label, tensors: 0, values: 0, bytes: 0, unknownBytes: false };
+      k.tensors++; k.values += t.logicalElements ?? t.elements; if (t.bytes == null) k.unknownBytes = true; else k.bytes += t.bytes; kinds.set(label, k);
+    }
+    for (const k of kinds.values()) k.bits = k.unknownBytes || !k.values ? null : k.bytes * 8 / k.values;
+    return [...kinds.values()].sort((a, b) => (b.bits ?? -1) - (a.bits ?? -1) || a.label.localeCompare(b.label));
   }
   // Magma, perceptually uniform. Light themes run it from pale to dark so more drift always means more contrast with the page.
   const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
@@ -93,5 +107,5 @@
       && (!status || (status === 'attention' ? needsAttention(r) : r.status === status)))
       .sort((a, b) => Number(hasChange(b)) - Number(hasChange(a)) || (b.metrics?.maxAbs || 0) - (a.metrics?.maxAbs || 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   }
-  return { groupKey, groups, tensorRole, comparisonMatrix, driftScale, heatRgb, heatColor, heatInk, divergingRgb, hasChange, needsAttention, diffOverview, diffRows, matchesQuery };
+  return { groupKey, groups, tensorRole, comparisonMatrix, rangeScale, driftScale, precisionLabel, precisionKinds, heatRgb, heatColor, heatInk, divergingRgb, hasChange, needsAttention, diffOverview, diffRows, matchesQuery };
 });

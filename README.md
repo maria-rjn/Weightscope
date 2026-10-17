@@ -18,7 +18,7 @@ If another extension owns these file types, use **Reopen Editor With… → Weig
 
 ## A simple first workflow
 
-1. Open a checkpoint. **Explore** shows aligned, clickable layer rows. Switch between **Stored values** and **Storage bytes**; bars share a scale across all pages. Unknown storage sizes remain explicitly unknown.
+1. Open a checkpoint. **Explore** opens on the **Model map**: every tensor is one cell, with layer groups as columns and tensor roles as rows. Color it by **Precision** to see a quantization recipe at a glance (for example, which layers a Q4_K_M file keeps in Q6_K), or by **Stored values**. Click **Scan weights** to sample every tensor once, then color the map by **Weight RMS** or **Largest |value|** to see how weights change with depth. Select a cell to open its tensor. Below the map, aligned layer rows switch between **Stored values** and **Storage bytes**; bars share a scale across all pages. Unknown storage sizes remain explicitly unknown.
 2. Select a group, then a tensor. Its details open in a focused drawer.
 3. Click **Draw weight image** to see the whole tensor as pixels, or **Analyze weights** to see a labeled distribution and health check. **Distribution bin counts** exposes the values without hovering; advanced statistics stay under **More statistics & sampling details**.
 4. Use **Compare checkpoint** to choose a target, then **Analyze weight changes**. The **Layer drift map** aligns layer groups against actual tensor-name suffixes. Its **Fingerprint** view draws the whole comparison as one dense image: layer groups run left to right and tensor roles top to bottom, so depth patterns show at a glance. Hover, or focus the map and use the arrow keys, to read a cell; click or press Enter for its tensor difference. The **Table** view shows the same cells with their values written in. Select a row label there for all tensors in that group. Search the map and page through groups and roles to inspect large models.
@@ -102,7 +102,7 @@ Statistics use up to 32 evenly spaced contiguous windows across flattened row-ma
 
 Comparisons use identical logical sample positions across formats. **Sample matches** means no differences were found in analyzed positions; it does not prove whole-tensor equality. **Full match** means every value was compared and agreed within tolerance. The JSON status for a full match remains `equal`. Precision changes remain visible even when numerical values match. NaN/Inf pairs are counted separately. Equal NaNs and equal infinities agree for this comparison policy; mismatched non-finite values mark the tensor changed. Relative L2 is undefined for a zero baseline norm, and cosine is undefined for zero norms.
 
-Files changed since inspection must be refreshed before analysis. No background model scans or weight analysis occur.
+Files changed since inspection must be refreshed before analysis. No background model scans or weight analysis occur: **Scan weights** runs only when you click it, samples each tensor the same way as **Analyze weights**, skips tensors already analyzed, and can be cancelled. PyTorch scans start the helper once per tensor, so they are slower. Precision colors include block scales in bits per value (GGUF Q4_K is 4.5 bits); sizes and statistics use a log scale spanning up to six decades.
 
 ### GGUF and Hugging Face checkpoints
 
