@@ -186,6 +186,7 @@
     "check": "node scripts/check.js",
     "demo": "node scripts/make-demo.js",
     "preview": "node scripts/preview.js",
+    "screenshots": "node scripts/screenshots.js",
     "package": "node scripts/package.js",
     "test:integration": "node --test test/integration.test.js"
   },
