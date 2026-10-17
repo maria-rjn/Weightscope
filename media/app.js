@@ -190,9 +190,12 @@
     function draw() {
       const peak = state.imageMode === 'peak', values = data[peak ? 'peak' : 'rms'], light = lightTheme(), magnitudes = values.filter(v => v != null).map(Math.abs).sort((a, b) => a - b);
       // Signed peaks share one symmetric range around zero. RMS is never negative and clusters well above zero, so it spans its own low-to-high range.
-      const level = (state.imageRange === 'clip' ? quantile(magnitudes, .995) : magnitudes.at(-1)) || magnitudes.at(-1) || 1;
-      const floor = peak ? 0 : Math.min(state.imageRange === 'clip' ? quantile(magnitudes, .005) : magnitudes[0] ?? 0, level * .999), position = v => (v - floor) / (level - floor);
-      const clipped = level < (magnitudes.at(-1) || 0) || floor > (peak ? 0 : magnitudes[0] ?? 0);
+      // A tensor (or change) that is 0 everywhere, or an RMS that is equal in every tile, has no range to color; it says so instead.
+      const top = magnitudes.at(-1) ?? 0, zero = !(top > 0), flat = !peak && !zero && magnitudes[0] === top;
+      const level = (state.imageRange === 'clip' ? quantile(magnitudes, .995) : top) || top || 1;
+      const floor = peak ? 0 : Math.min(state.imageRange === 'clip' ? quantile(magnitudes, .005) : magnitudes[0] ?? 0, level * .999), position = v => flat ? .5 : (v - floor) / (level - floor);
+      const clipped = !zero && !flat && (level < top || floor > (peak ? 0 : magnitudes[0] ?? 0));
+      const uniform = zero ? 'Every tile is 0.' : flat ? `Every tile has RMS ${chartNumber(top)}.` : null;
       const off = document.createElement('canvas'); off.width = data.tileCols; off.height = data.tileRows;
       const g = off.getContext('2d'); g.fillStyle = getComputedStyle(box).getPropertyValue('--mint'); g.fillRect(0, 0, 1, 1); const invalid = [...g.getImageData(0, 0, 1, 1).data.slice(0, 3)];
       const pixels = g.createImageData(data.tileCols, data.tileRows);
@@ -202,10 +205,10 @@
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); canvas.style.height = `${height}px`;
       const c = canvas.getContext('2d'); c.imageSmoothingEnabled = false; c.drawImage(off, 0, 0, canvas.width, canvas.height);
       const ramp = el('i', 'image-ramp'); ramp.style.background = `linear-gradient(to right, ${[0, .25, .5, .75, 1].map(f => `rgb(${(peak ? view.divergingRgb(f * 2 - 1, light) : view.heatRgb(f, light)).join(', ')})`).join(', ')})`;
-      legend.replaceChildren(); add(legend, el('span', '', peak ? `−${chartNumber(level)}` : chartNumber(floor)), ramp, el('span', '', peak ? `+${chartNumber(level)}` : chartNumber(level)), el('span', 'subtle', peak ? `Signed peak ${word} per tile${clipped ? ', clipped' : ''}` : `RMS ${word} per tile${clipped ? ', clipped' : ''}`), nonFinite.size && add(el('span'), el('i', 'swatch non-finite-tile'), document.createTextNode(`${integer(nonFinite.size)} tiles contain NaN or infinity`)));
-      const largest = data.largest ? `Largest ${word} magnitude${data.exact ? '' : ' among values read'}: ${number(data.largest.value)} at ${where(data.largest.tile)}.` : `No finite ${word}s.`;
-      facts.textContent = `${data.exact ? 'Full tensor' : `${integer(data.rowsRead)} of ${integer(data.rows)} rows read${data.columnsSampled ? ' in sampled column windows' : ', every column'}`} · ${integer(data.rows)} × ${integer(data.cols)} shown as ${integer(data.tileRows)} × ${integer(data.tileCols)} tiles${data.shape.length > 2 ? ` (first ${data.split} of ${data.shape.length} dimensions as rows)` : ''}.${Math.abs(natural - height) > 1 ? ' Aspect ratio compressed to fit.' : ''}${clipped ? ` Colors saturate beyond ${peak ? `±${chartNumber(level)}` : `${chartNumber(floor)} and ${chartNumber(level)}`}.` : ''} ${largest}`;
-      canvas.setAttribute('aria-label', `${kind === 'diff' ? 'Change' : 'Weight'} image, ${data.tileRows} by ${data.tileCols} tiles. ${peak ? `Blue is negative and red is positive, saturating at ±${chartNumber(level)}` : `Brighter is larger RMS, from ${chartNumber(floor)} to ${chartNumber(level)}`}. ${largest}`);
+      legend.replaceChildren(); add(legend, ...uniform ? [el('span', 'subtle', uniform)] : [el('span', '', peak ? `−${chartNumber(level)}` : chartNumber(floor)), ramp, el('span', '', peak ? `+${chartNumber(level)}` : chartNumber(level)), el('span', 'subtle', peak ? `Signed peak ${word} per tile${clipped ? ', clipped' : ''}` : `RMS ${word} per tile${clipped ? ', clipped' : ''}`)], nonFinite.size && add(el('span'), el('i', 'swatch non-finite-tile'), document.createTextNode(`${integer(nonFinite.size)} tiles contain NaN or infinity`)));
+      const largest = zero && data.largest ? kind === 'diff' ? `No change ${data.exact ? 'in the tensor' : 'in the values read'}.` : `Every ${data.exact ? 'value' : 'value read'} is 0.` : data.largest ? `Largest ${word} magnitude${data.exact ? '' : ' among values read'}: ${number(data.largest.value)} at ${where(data.largest.tile)}.` : `No finite ${word}s.`;
+      facts.textContent = `${data.exact ? 'Full tensor' : `${integer(data.rowsRead)} of ${integer(data.rows)} rows read${data.columnsSampled ? ' in sampled column windows' : ', every column'}`} · ${integer(data.rows)} × ${integer(data.cols)} shown as ${integer(data.tileRows)} × ${integer(data.tileCols)} tiles${data.shape.length > 2 ? ` (first ${data.split} of ${data.shape.length} dimensions as rows)` : ''}.${Math.abs(natural - height) > 1 ? ' Aspect ratio adjusted to fit.' : ''}${clipped ? ` Colors saturate beyond ${peak ? `±${chartNumber(level)}` : `${chartNumber(floor)} and ${chartNumber(level)}`}.` : ''} ${largest}`;
+      canvas.setAttribute('aria-label', `${kind === 'diff' ? 'Change' : 'Weight'} image, ${data.tileRows} by ${data.tileCols} tiles. ${uniform || `${peak ? `Blue is negative and red is positive, saturating at ±${chartNumber(level)}` : `Brighter is larger RMS, from ${chartNumber(floor)} to ${chartNumber(level)}`}.`} ${largest}`);
     }
     canvas.addEventListener('pointermove', e => {
       const r = Math.min(data.tileRows - 1, Math.floor(e.offsetY / canvas.clientHeight * data.tileRows)), col = Math.min(data.tileCols - 1, Math.floor(e.offsetX / canvas.clientWidth * data.tileCols)), t = r * data.tileCols + col;
@@ -510,7 +513,7 @@
     else if (m.type === 'error') showError(m.message);
     else if (m.type === 'checkpointSaved') { state.savedPath = m.path; const n = document.getElementById('error'); if (n) { n.className = 'notice'; n.setAttribute('role', 'status'); n.textContent = `Checkpoint copy saved: ${m.path}`; n.hidden = false; } }
   });
-  // VS Code swaps the body theme class without reloading; the drift map's colors depend on it.
-  new MutationObserver(() => { if (state.tab === 'compare' && state.target) renderDiffOverview(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  // VS Code swaps the body theme class without reloading; the maps and images take their colors from it.
+  new MutationObserver(() => { if (state.tab === 'compare' && state.target) renderDiffOverview(); refreshModelMap(); if (state.drawerOpen) renderDetail(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   buildShell(); send('ready');
 })();
