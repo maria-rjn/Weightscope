@@ -68,7 +68,7 @@ function activate(context) {
       const key = document.uri.toString(), uri = document.uri;
       panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png');
       panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
-      let model, target, rows = [], matching, stats = new Map(), busy = false, operation, disposed = false, ready = false;
+      let model, target, rows = [], matching, stats = new Map(), images = new Map(), diffImages = new Map(), busy = false, operation, disposed = false, ready = false;
       const post = data => { if (!disposed) panel.webview.postMessage(data); };
       const payload = () => ({ type: 'model', model: { ...backend.publicModel(model), editing: checkpoint.capabilities(model) }, settings: settings() });
       async function run(label, fn) {
@@ -81,7 +81,7 @@ function activate(context) {
       }
       async function refresh() {
         await run('Reading model metadata…', async options => {
-          model = await backend.inspect(uri.fsPath, options); target = undefined; rows = []; stats.clear();
+          model = await backend.inspect(uri.fsPath, options); target = undefined; rows = []; stats.clear(); images.clear(); diffImages.clear();
           post(payload());
         });
       }
@@ -91,13 +91,19 @@ function activate(context) {
         if (!targetUri) return;
         await run('Reading target checkpoint…', async options => {
           const next = await backend.inspect(targetUri.fsPath, options);
-          target = next; rows = backend.structureDiff(model, target); matching = backend.tensorMatching(model, target);
+          target = next; rows = backend.structureDiff(model, target); matching = backend.tensorMatching(model, target); diffImages.clear();
           post({ type: 'comparison', target: backend.publicModel(target), rows, matching });
         });
       }
       const actions = {
         ready: async () => {
-          if (ready) { if (model) { post(payload()); for (const [name, data] of stats) post({ type: 'statistics', name, data }); if (target) post({ type: 'comparison', target: backend.publicModel(target), rows, matching }); } return; }
+          if (ready) {
+            if (model) {
+              post(payload()); for (const [name, data] of stats) post({ type: 'statistics', name, data }); for (const [name, data] of images) post({ type: 'tensorImage', name, data });
+              if (target) { post({ type: 'comparison', target: backend.publicModel(target), rows, matching }); for (const [name, data] of diffImages) post({ type: 'diffImage', name, data }); }
+            }
+            return;
+          }
           ready = true; await refresh();
           const next = pending.get(key); pending.delete(key); if (next) await compare(next);
         },
@@ -109,6 +115,16 @@ function activate(context) {
           if (!model?.byName.has(message.name)) throw new Error('Choose a tensor first.');
           const data = await backend.tensorStatistics(model, message.name, options); stats.set(message.name, data);
           post({ type: 'statistics', name: message.name, data });
+        }),
+        image: message => run('Drawing weight image…', async options => {
+          if (!model?.byName.has(message.name)) throw new Error('Choose a tensor first.');
+          const data = await backend.tensorImage(model, message.name, options); images.set(message.name, data);
+          post({ type: 'tensorImage', name: message.name, data });
+        }),
+        diffImage: message => run('Drawing change image…', async options => {
+          if (!model || !target) throw new Error('Select a target checkpoint first.');
+          const data = await backend.differenceImage(model, target, message.name, options); diffImages.set(message.name, data);
+          post({ type: 'diffImage', name: message.name, data });
         }),
         analyzeDiff: message => run('Comparing tensor values…', async options => {
           if (!model || !target) throw new Error('Select a target checkpoint first.');

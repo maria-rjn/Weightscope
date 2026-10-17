@@ -5,6 +5,7 @@
 - Add a **Fingerprint** view to the layer drift map. It draws every layer group (columns) and tensor role (rows) as one dense canvas image, with hover details, arrow-key navigation, and a screen-reader description for each cell. The **Table** view keeps written values.
 - Add a **Log scale** for relative L2 drift, on by default, spanning up to six decades so small changes stay visible next to a large outlier. **Linear scale** remains available, and both stay shared across pages and filters.
 - Color drift with a perceptually uniform ramp (reversed in light themes) in both views, and give exact zero drift its own neutral color.
+- Add **Draw weight image** to the tensor inspector and **Draw change image** to the tensor difference drawer. Each draws the tensor (or target minus baseline) as up to 192 × 192 tiles colored by RMS or signed peak, with hover readouts, clipped or full color range, and the location of the largest value. Images read up to 4,194,304 values (262,144 for PyTorch) as evenly spaced runs of whole rows and state their coverage; change images use the same translated positions as GGUF comparisons.
 
 ## 0.4.2
 

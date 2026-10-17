@@ -11,6 +11,7 @@ const { pairTensors, sourceIndex } = require('./tensor-names');
 const ollama = require('./ollama');
 const sharded = require('./sharded');
 const mxfp8 = require('./quantization/mxfp8');
+const image = require('./image');
 
 const UNTRUSTED = 'PyTorch inspection requires a trusted VS Code workspace.';
 
@@ -329,17 +330,36 @@ async function tensorStatistics(model, name, options) {
   const tensor = model.byName.get(name);
   return statistics(await sample(model, name, options), tensor.logicalElements ?? tensor.elements, tensor.valueBasis || 'Weight values');
 }
-async function compareTensor(base, target, name, options = {}) {
+// Reads both checkpoints at the same logical positions, chosen from the reference tensor.
+async function pairValues(base, target, name, positions, options) {
   const pair = pairTensors(base, target).byName.get(name);
   if (!pair || structureRow(pair).status !== 'unverified') throw new Error('This tensor has incompatible shapes or numerical units, or is missing from a checkpoint.');
   const { layout } = pair;
   if (layout?.error) throw new Error(layout.error);
   // The non-GGUF tensor defines sample positions; the GGUF side is gathered to match them.
   const reference = layout?.side === 'left' ? pair.right : pair.left, total = reference.logicalElements ?? reference.elements;
-  const windows = sampleWindows(total, options.sampleSize || 32768);
+  const windows = positions(reference, total);
   const read = (model, tensor, side) => layout?.side === side ? sampleMapped(model, windows, layout, options) : sampleAt(model, tensor.name, windows, options);
-  const left = await read(base, pair.left, 'left'), right = await read(target, pair.right, 'right');
+  return { left: await read(base, pair.left, 'left'), right: await read(target, pair.right, 'right'), total };
+}
+async function compareTensor(base, target, name, options = {}) {
+  const { left, right, total } = await pairValues(base, target, name, (_, total) => sampleWindows(total, options.sampleSize || 32768), options);
   return difference(left, right, total, options.absoluteTolerance || 0);
 }
+// Images read far more values than statistics, so they have their own fixed budget.
+// The PyTorch helper returns at most 262,144 values per request.
+const imageBudget = (...models) => models.some(m => m.format === 'pytorch') ? 262144 : 4194304;
+async function tensorImage(model, name, options = {}) {
+  const tensor = model.byName.get(name);
+  if (!tensor) throw new Error('Unknown tensor.');
+  if (tensor.analysisUnavailable) throw new Error(tensor.analysisUnavailable);
+  const layout = image.plan(tensor.logicalShape || tensor.shape, imageBudget(model));
+  return image.tiles(await sampleAt(model, name, layout.windows, options), layout, tensor.valueBasis || 'Weight values');
+}
+async function differenceImage(base, target, name, options = {}) {
+  let layout;
+  const { left, right } = await pairValues(base, target, name, reference => (layout = image.plan(reference.logicalShape || reference.shape, imageBudget(base, target))).windows, options);
+  return image.tiles(image.delta(left, right), layout, 'Change (target − baseline)');
+}
 function tensorMatching(base, target) { return pairTensors(base, target).matching; }
-module.exports = { inspect, publicModel, sample, tensorStatistics, compareTensor, structureDiff, tensorMatching, pythonRequest, assertCurrent, identity };
+module.exports = { inspect, publicModel, sample, tensorStatistics, compareTensor, tensorImage, differenceImage, structureDiff, tensorMatching, pythonRequest, assertCurrent, identity };

@@ -115,3 +115,9 @@ test('drift colors use one perceptual ramp, reversed for light themes, with read
   assert.equal(view.heatColor(1, true), 'rgb(20, 14, 54)'); assert.equal(view.heatColor(2), view.heatColor(1)); assert.equal(view.heatColor(-1), view.heatColor(0));
   assert.equal(view.heatInk(0), 'light'); assert.equal(view.heatInk(1), 'dark'); assert.equal(view.heatInk(0, true), 'dark'); assert.equal(view.heatInk(1, true), 'light');
 });
+
+test('signed image colors diverge around a theme-matched center', () => {
+  assert.deepEqual(view.divergingRgb(-1), [185, 220, 255]); assert.deepEqual(view.divergingRgb(0), [20, 23, 28]); assert.deepEqual(view.divergingRgb(1), [255, 198, 168]);
+  assert.deepEqual(view.divergingRgb(0, true), [247, 247, 247]); assert.deepEqual(view.divergingRgb(5), view.divergingRgb(1));
+  assert.deepEqual(view.heatRgb(1), [252, 253, 191]);
+});

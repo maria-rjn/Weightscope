@@ -39,6 +39,8 @@ async function main() {
         const m = JSON.parse(body), result = [], base = m.previewOllama ? ollamaModel : m.previewSharded ? shardedModel : model, comparison = m.previewOllama ? ollamaTarget : target;
         if (m.type === 'ready' || m.type === 'refresh' || m.type === 'openOllama') result.push({ type: 'model', model: backend.publicModel(m.type === 'openOllama' ? ollamaModel : base), settings: options });
         else if (m.type === 'stats') result.push({ type: 'statistics', name: m.name, data: await backend.tensorStatistics(base, m.name, options) });
+        else if (m.type === 'image') result.push({ type: 'tensorImage', name: m.name, data: await backend.tensorImage(base, m.name, options) });
+        else if (m.type === 'diffImage') result.push({ type: 'diffImage', name: m.name, data: await backend.differenceImage(base, comparison, m.name, options) });
         else if (m.type === 'compare' || m.type === 'compareOllama') result.push({ type: 'comparison', target: backend.publicModel(comparison), rows, matching: backend.tensorMatching(base, comparison) });
         else if (m.type === 'analyzeDiff') {
           const candidates = m.name ? rows.filter(r => r.name === m.name) : rows.filter(r => r.status === 'unverified');
