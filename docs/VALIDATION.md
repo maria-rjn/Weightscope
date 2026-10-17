@@ -2,7 +2,7 @@
 
 ## Visualization update — October 17, 2026
 
-The isolated visualization branch passed `npm run check` and all **63 tests with no failures or skips**, using the existing Python framework environment. New coverage checks shared histogram domains, constant/empty/non-finite distributions, overflowing numeric ranges, zero baseline norms, exported distribution data, natural matrix ordering, normalized-name collisions, and retention of 135 groups × 12 roles. The VSIX also builds with the existing packager and no added runtime dependencies.
+The isolated visualization branch, including main's checkpoint Save As changes, passed `npm run check` and all **67 tests with no failures or skips**, using the existing Python framework environment. New coverage checks shared histogram domains, constant/empty/non-finite distributions, overflowing numeric ranges, zero baseline norms, exported distribution data, natural matrix ordering, normalized-name collisions, and retention of 135 groups × 12 roles. The VSIX also builds with the existing packager and no added runtime dependencies.
 
 The production frontend was checked against the real synthetic checkpoint preview at 1280 × 900 and 320 × 900. Stored-value/storage-byte switching, group-to-tensor navigation, numerical analysis, map search, eight-row group drill-down, shared-bin distribution overlays, Escape-to-close, and keyboard focus restoration worked. The narrow comparison drawer and document have no horizontal overflow; the matrix scrolls horizontally within its own table container. Captures: [overview](images/layer-overview.jpg), [drift map](images/layer-drift-map.jpg), and [comparison distributions](images/shared-distributions.jpg).
 
