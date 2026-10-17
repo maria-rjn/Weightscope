@@ -1,5 +1,13 @@
 # Validation of version 0.3.0
 
+## Cross-format GGUF comparison — October 17, 2026
+
+`WEIGHTSCOPE_TEST_PYTHON="$PWD/.test-runtime/bin/python" npm test` passed **78 tests with no failures or skips**, and `npm run check` passed. Native tests build Hugging Face-named safetensors and GGUF files whose Q/K rows were reordered by a literal `reshape → swapaxes` implementation of llama.cpp's `permute`, then verify exact matches for full and bounded samples in both comparison directions, per-block head-count arrays, explanations for missing or indivisible head counts, Gemma sandwich-norm naming and the `1 + w` offset, stacked Mixtral experts, unsupported architectures, and ONNX fallback. A control test confirms that unpermuted rows report drift, so the restoration is applied rather than assumed.
+
+The framework fixtures convert a two-block GQA Llama with gguf 0.19.0: gguf-py's tensor name map, llama.cpp's `permute` copied verbatim, and gguf-py's Q8_0 quantizer. For all 21 pairs, WeightScope's mean and maximum absolute error match the values computed from gguf-py's dequantizer within 1e-9. Restored K rows have cosine similarity 0.99999; without restoration the same tensor shows cosine 0.30. A second fixture checks WeightScope's name translation against gguf-py's `TensorNameMap` for every supported architecture.
+
+The production frontend was checked in the browser preview with the Hugging Face checkpoint as baseline and the Q8_0 GGUF as target. The comparison header explained the translation, 16 quantized matrices showed as changed and 5 F32 norms as full matches. The Q drawer showed both tensor names and the rotary note, and searching `attn_k` found the translated key rows. A real Extension Development Host and real multi-gigabyte models were not run for this update.
+
 ## Visualization update — October 17, 2026
 
 The isolated visualization branch, including main's checkpoint Save As changes, passed `npm run check` and all **67 tests with no failures or skips**, using the existing Python framework environment. New coverage checks shared histogram domains, constant/empty/non-finite distributions, overflowing numeric ranges, zero baseline norms, exported distribution data, natural matrix ordering, normalized-name collisions, and retention of 135 groups × 12 roles. The VSIX also builds with the existing packager and no added runtime dependencies.

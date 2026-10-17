@@ -66,7 +66,7 @@ function activate(context) {
     resolveCustomEditor(document, panel) {
       const key = document.uri.toString(), uri = document.uri;
       panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
-      let model, target, rows = [], stats = new Map(), busy = false, operation, disposed = false, ready = false;
+      let model, target, rows = [], matching, stats = new Map(), busy = false, operation, disposed = false, ready = false;
       const post = data => { if (!disposed) panel.webview.postMessage(data); };
       const payload = () => ({ type: 'model', model: { ...backend.publicModel(model), editing: checkpoint.capabilities(model) }, settings: settings() });
       async function run(label, fn) {
@@ -89,13 +89,13 @@ function activate(context) {
         if (!targetUri) return;
         await run('Reading target checkpoint…', async options => {
           const next = await backend.inspect(targetUri.fsPath, options);
-          target = next; rows = backend.structureDiff(model, target);
-          post({ type: 'comparison', target: backend.publicModel(target), rows });
+          target = next; rows = backend.structureDiff(model, target); matching = backend.tensorMatching(model, target);
+          post({ type: 'comparison', target: backend.publicModel(target), rows, matching });
         });
       }
       const actions = {
         ready: async () => {
-          if (ready) { if (model) { post(payload()); for (const [name, data] of stats) post({ type: 'statistics', name, data }); if (target) post({ type: 'comparison', target: backend.publicModel(target), rows }); } return; }
+          if (ready) { if (model) { post(payload()); for (const [name, data] of stats) post({ type: 'statistics', name, data }); if (target) post({ type: 'comparison', target: backend.publicModel(target), rows, matching }); } return; }
           ready = true; await refresh();
           const next = pending.get(key); pending.delete(key); if (next) await compare(next);
         },
@@ -148,7 +148,7 @@ function activate(context) {
             for (const checkpoint of protectedPaths) if (destination === await fs.realpath(checkpoint).catch(e => { if (e.code === 'ENOENT') return checkpoint; throw e; })) throw new Error('A report cannot overwrite an inspected checkpoint through a symlink.');
           }
           const report = { version: 1, exportedAt: new Date().toISOString(), model: backend.publicModel(model), statistics: Object.fromEntries(stats),
-            comparison: target ? { target: backend.publicModel(target), rows } : null,
+            comparison: target ? { target: backend.publicModel(target), matching, rows } : null,
             note: 'Counts refer to stored tensor elements. Sample matches do not prove whole-tensor equality. Numerical metrics use the stated tolerance and sampling coverage.' };
           await vscode.workspace.fs.writeFile(output, Buffer.from(JSON.stringify(report, null, 2)));
           vscode.window.showInformationMessage(`WeightScope report saved: ${output.fsPath}`);

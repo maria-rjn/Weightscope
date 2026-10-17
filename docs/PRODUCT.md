@@ -24,13 +24,15 @@ Version 0.3.0 adds local Ollama catalog discovery, original GGUF blob inspection
 
 The visualization update replaces overview cards with aligned size bars and comparison cards with a layer-by-tensor-role matrix. Roles are literal suffixes of tensor names, with a generic fallback and collision-preserving cells; they do not imply a model architecture or execution graph. Relative L2 uses one scale across all pages and filters, while coverage, precision, structural changes, and unavailable analysis retain separate labels. Tensor distributions have labeled axes, accessible bin counts, and shared-bin baseline/target overlays based on existing bounded samples. All rendering stays local with no runtime plotting dependencies.
 
+Cross-format comparison pairs a GGUF file with its Hugging Face source, so quantization error can be measured per layer. Names are translated using llama.cpp's conventions for known architectures. Conversion steps that move or offset values (rotary Q/K permutation, Gemma's norm offset, stacked experts) are reversed explicitly and shown on each tensor; unknown architectures fall back to exact names with an explanation rather than guessing.
+
 Explicit boundaries keep results trustworthy: name hierarchy is not a recovered execution graph; stored-element counts are not unique trainable counts; sample matches are not exact equality. Unsupported numerical decoders produce clear explanations rather than fabricated values.
 
 ## Candidate next releases
 
 - Sharded safetensors indexes and aggregate model inspection.
 - GGUF IQ and newer quantization decoders.
-- LoRA-aware comparison and configurable tensor-name mapping.
+- LoRA-aware comparison and user-configurable tensor-name mapping beyond the built-in Hugging Face ↔ GGUF translation.
 - Full-tensor streaming comparisons and checksums for exact verification.
 - ONNX graph visualization, sparse tensors, and dequantized numerical analysis.
 - Persistent worker processes for repeated PyTorch operations.

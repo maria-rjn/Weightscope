@@ -8,6 +8,7 @@ const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
 const backend = require('../src/backend');
 const { sampleWindows } = require('../src/binary');
+const { translate, ARCHITECTURES } = require('../src/tensor-names');
 const pythonPath = process.env.WEIGHTSCOPE_TEST_PYTHON;
 let dir;
 before(async () => {
@@ -39,6 +40,25 @@ test('upstream GGUF writer and official dequantizers agree with scalar, primary 
     const reference = sampleWindows(values.length, 256).flatMap(w => values.slice(w.start, w.start + w.count));
     bounded.forEach((v, i) => assert.ok(Math.abs(v - reference[i]) < 1e-5));
   }
+});
+test('a llama.cpp-style Q8_0 conversion pairs with its Hugging Face source tensor by tensor', { skip: !pythonPath }, async () => {
+  const hf = await backend.inspect(path.join(dir, 'hf-llama.safetensors')), gguf = await backend.inspect(path.join(dir, 'llama-q8_0.gguf'));
+  const expected = JSON.parse(await fs.readFile(path.join(dir, 'cross-format.json'), 'utf8')), rows = backend.structureDiff(hf, gguf);
+  assert.equal(backend.tensorMatching(hf, gguf).matched, Object.keys(expected).length); assert.equal(rows.length, Object.keys(expected).length);
+  for (const row of rows) {
+    const e = expected[row.name]; assert.equal(row.targetName, e.target); assert.equal(row.status, 'unverified');
+    const d = await backend.compareTensor(hf, gguf, row.name, options);
+    assert.equal(d.exact, true); assert.equal(d.status, e.maxAbs ? 'changed' : 'equal', row.name);
+    assert.ok(Math.abs(d.meanAbs - e.meanAbs) < 1e-9, `${row.name} mean |Δ| ${d.meanAbs} vs ${e.meanAbs}`);
+    assert.ok(Math.abs(d.maxAbs - e.maxAbs) < 1e-9, `${row.name} max |Δ| ${d.maxAbs} vs ${e.maxAbs}`);
+    if (e.maxAbs) assert.ok(d.cosine > .999, `${row.name} cosine ${d.cosine}`);
+  }
+});
+test('name translation agrees with gguf-py’s tensor name map for every supported architecture', { skip: !pythonPath }, async () => {
+  const expected = JSON.parse(await fs.readFile(path.join(dir, 'gguf-names.json'), 'utf8'));
+  assert.deepEqual(Object.keys(expected).sort(), Object.keys(ARCHITECTURES).sort());
+  // gguf-py omits tensors an architecture never has; every name it does define must agree.
+  for (const [arch, names] of Object.entries(expected)) for (const [name, target] of Object.entries(names)) if (target) assert.equal(translate(name, ARCHITECTURES[arch])?.name, target, `${arch}: ${name}`);
 });
 test('MXFP8 agrees with PyTorch for every FP8 code and E8M0 scale, in full and bounded samples', { skip: !pythonPath }, async () => {
   const model = await backend.inspect(path.join(dir, 'ollama', 'manifests', 'registry.ollama.ai', 'library', 'mxfp8', 'latest'));

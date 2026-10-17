@@ -59,11 +59,13 @@
     const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
     return { groups: [...map.values()].sort((a, b) => natural(a.key, b.key)), roles: [...roles].sort(natural), maxRelativeL2 };
   }
+  // Translated cross-format rows also answer to the tensor name in the other checkpoint.
+  const matchesQuery = (row, query) => [row.name, row.baseName, row.targetName].some(n => n && n.toLowerCase().includes(query.toLowerCase()));
   function diffRows(rows, { query = '', status = 'attention', group = '', role = '' } = {}) {
-    return rows.filter(r => r.name.toLowerCase().includes(query.toLowerCase()) && (!group || groupKey(r.name) === group)
+    return rows.filter(r => matchesQuery(r, query) && (!group || groupKey(r.name) === group)
       && (!role || tensorRole(r.name) === role)
       && (!status || (status === 'attention' ? needsAttention(r) : r.status === status)))
       .sort((a, b) => Number(hasChange(b)) - Number(hasChange(a)) || (b.metrics?.maxAbs || 0) - (a.metrics?.maxAbs || 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   }
-  return { groupKey, groups, tensorRole, comparisonMatrix, hasChange, needsAttention, diffOverview, diffRows };
+  return { groupKey, groups, tensorRole, comparisonMatrix, hasChange, needsAttention, diffOverview, diffRows, matchesQuery };
 });

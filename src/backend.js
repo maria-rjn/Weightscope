@@ -6,7 +6,8 @@ const { Reader, WIDTHS, scalar, half, bfloat, safeInteger, sampleWindows, cancel
 const { parseSafetensors } = require('./parsers/safetensors');
 const { parseGGUF, decodeBlock } = require('./parsers/gguf');
 const { parseONNX, varint } = require('./parsers/onnx');
-const { statistics, difference, structureDiff } = require('./math');
+const { statistics, difference, structureRow, structureDiff } = require('./math');
+const { pairTensors, sourceIndex } = require('./tensor-names');
 const ollama = require('./ollama');
 const mxfp8 = require('./quantization/mxfp8');
 
@@ -219,10 +220,29 @@ async function externalStorage(model, tensor) {
   return { file, identity: identity(stat), tensor: { ...tensor, storage: { kind: 'raw', offset, length } } };
 }
 async function sample(model, name, options = {}) {
+  const tensor = model.byName.get(name);
+  if (!tensor) throw new Error('Unknown tensor.');
+  return sampleAt(model, name, sampleWindows(tensor.logicalElements ?? tensor.elements, options.sampleSize || 32768), options);
+}
+// Reads the GGUF values a translated pair's reference windows point at, in reference order.
+// Reordered positions are sorted and coalesced so storage is still read in contiguous runs.
+async function sampleMapped(model, windows, layout, options) {
+  let values;
+  if (!layout.heads && !layout.offset) values = await sampleAt(model, layout.tensor, windows, options);
+  else {
+    const positions = [];
+    for (const w of windows) for (let i = w.start; i < w.start + w.count; i++) positions.push(sourceIndex(layout, i));
+    const order = positions.map((_, i) => i).sort((a, b) => positions[a] - positions[b]), runs = [];
+    for (const i of order) { const run = runs.at(-1); if (run && run.start + run.count === positions[i]) run.count++; else runs.push({ start: positions[i], count: 1 }); }
+    const stored = await sampleAt(model, layout.tensor, runs, options);
+    values = new Array(positions.length); order.forEach((i, k) => { values[i] = stored[k]; });
+  }
+  return layout.shift ? values.map(v => v - layout.shift) : values;
+}
+async function sampleAt(model, name, windows, options = {}) {
   cancelled(options.signal); await assertCurrent(model);
   const tensor = model.byName.get(name);
   if (!tensor) throw new Error('Unknown tensor.');
-  const windows = sampleWindows(tensor.logicalElements ?? tensor.elements, options.sampleSize || 32768);
   let values;
   if (model.format === 'pytorch') {
     const result = await pythonRequest({ action: 'sample', path: model.path, name, windows }, options);
@@ -255,10 +275,16 @@ async function tensorStatistics(model, name, options) {
   return statistics(await sample(model, name, options), tensor.logicalElements ?? tensor.elements, tensor.valueBasis || 'Weight values');
 }
 async function compareTensor(base, target, name, options = {}) {
-  const row = structureDiff({ tensors: [base.byName.get(name)].filter(Boolean) }, { tensors: [target.byName.get(name)].filter(Boolean) })[0];
-  if (!row || row.status !== 'unverified') throw new Error('This tensor has incompatible shapes or numerical units, or is missing from a checkpoint.');
-  const left = await sample(base, name, options), right = await sample(target, name, options);
-  const tensor = base.byName.get(name);
-  return difference(left, right, tensor.logicalElements ?? tensor.elements, options.absoluteTolerance || 0);
+  const pair = pairTensors(base, target).byName.get(name);
+  if (!pair || structureRow(pair).status !== 'unverified') throw new Error('This tensor has incompatible shapes or numerical units, or is missing from a checkpoint.');
+  const { layout } = pair;
+  if (layout?.error) throw new Error(layout.error);
+  // The non-GGUF tensor defines sample positions; the GGUF side is gathered to match them.
+  const reference = layout?.side === 'left' ? pair.right : pair.left, total = reference.logicalElements ?? reference.elements;
+  const windows = sampleWindows(total, options.sampleSize || 32768);
+  const read = (model, tensor, side) => layout?.side === side ? sampleMapped(model, windows, layout, options) : sampleAt(model, tensor.name, windows, options);
+  const left = await read(base, pair.left, 'left'), right = await read(target, pair.right, 'right');
+  return difference(left, right, total, options.absoluteTolerance || 0);
 }
-module.exports = { inspect, publicModel, sample, tensorStatistics, compareTensor, structureDiff, pythonRequest, assertCurrent, identity };
+function tensorMatching(base, target) { return pairTensors(base, target).matching; }
+module.exports = { inspect, publicModel, sample, tensorStatistics, compareTensor, structureDiff, tensorMatching, pythonRequest, assertCurrent, identity };

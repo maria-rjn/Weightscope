@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Compare GGUF files with the Hugging Face safetensors or PyTorch checkpoint they were converted from. Tensor names are translated to llama.cpp's GGUF names for supported architectures, Q/K rows permuted into llama.cpp's rotary layout are restored using the GGUF head counts, Gemma's `1 + w` norm offset is removed, and stacked GGUF experts are compared per expert. The drawer shows both tensor names and each reversed step; unsupported architectures keep exact-name matching with an explanation.
 - Align model layer size bars on a shared scale, with stored-value and storage-byte measures and explicit unknown sizes.
 - Replace comparison cards with a searchable, paginated layer-by-tensor-role heatmap of relative L2 drift, preserving structural, precision, non-finite, and sampling states.
 - Add labeled SVG distributions, accessible bin-count tables, and baseline/target overlays computed with shared bins from the existing samples.
