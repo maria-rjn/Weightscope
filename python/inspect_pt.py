@@ -1,4 +1,4 @@
-"""Read-only PyTorch helper. JSON in/out; no imports from checkpoint code."""
+"""Restricted PyTorch inspection and explicit Save As edits. JSON in/out; no checkpoint code."""
 import json
 import math
 import os
@@ -81,7 +81,7 @@ def inspect(file, torch):
     rows = []
     for name, tensor in tensors(root, torch).items():
         dtype = str(tensor.dtype).removeprefix("torch.")
-        rows.append(dict(name=name, shape=list(tensor.shape), dtype=DTYPES.get(dtype, dtype.upper()), elements=tensor.numel(), bytes=tensor.numel() * tensor.element_size(), storage=dict(kind="pytorch")))
+        rows.append(dict(name=name, shape=list(tensor.shape), dtype=DTYPES.get(dtype, dtype.upper()), elements=tensor.numel(), bytes=tensor.numel() * tensor.element_size(), storage=dict(kind="pytorch", editable=tensor.layout == torch.strided and not tensor.is_quantized and not tensor.is_complex())))
     metadata = {"torchVersion": torch.__version__, "loading": "weights_only=True, CPU, FakeTensorMode"}
     if isinstance(root, Mapping):
         for key, value in root.items():
@@ -118,6 +118,59 @@ def sample(file, name, windows, torch):
     return output
 
 
+def edit(file, output, edits, torch):
+    root = load(file, torch)
+    originals = tensors(root, torch)
+    replacements = {}
+    with torch.no_grad():
+        for change in edits:
+            name = change['name']
+            tensor = originals.get(name)
+            if tensor is None or tensor.layout != torch.strided or tensor.is_quantized or tensor.is_complex():
+                raise ValueError('Editing requires dense real, non-quantized PyTorch tensors.')
+            operation = change['operation']
+            if operation == 'replace':
+                donor = tensors(load(change['sourcePath'], torch), torch).get(change['sourceName'])
+                if donor is None or donor.shape != tensor.shape or donor.dtype != tensor.dtype or donor.layout != torch.strided or donor.is_quantized or donor.is_complex():
+                    raise ValueError('Replacement tensors must have the same shape and dtype with dense real storage.')
+                replacements[name] = donor.clone()
+            elif operation == 'zero':
+                replacements[name] = torch.zeros_like(tensor)
+            elif operation == 'scale':
+                factor = change['factor']
+                if not isinstance(factor, (int, float)) or not math.isfinite(factor) or not tensor.is_floating_point():
+                    raise ValueError('Scaling requires floating-point tensors and a finite factor.')
+                # Operate on a separate tensor so aliased, unselected weights remain unchanged.
+                result = (tensor.to(torch.float64) * factor).to(tensor.dtype)
+                if not torch.isfinite(tensor).all().item() or not torch.isfinite(result).all().item():
+                    raise ValueError('Scaling requires finite weights and must not overflow the tensor dtype.')
+                replacements[name] = result
+            else:
+                raise ValueError('Unknown tensor edit operation.')
+
+    def replace(value, prefix=''):
+        if torch.is_tensor(value):
+            return replacements.get(prefix or 'tensor', value)
+        if isinstance(value, Mapping):
+            for key in list(value):
+                if isinstance(key, (str, int)):
+                    value[key] = replace(value[key], f'{prefix}.{key}' if prefix else str(key))
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                value[i] = replace(item, f'{prefix}.{i}' if prefix else str(i))
+        elif isinstance(value, tuple):
+            return tuple(replace(item, f'{prefix}.{i}' if prefix else str(i)) for i, item in enumerate(value))
+        return value
+
+    model_key = next((key for key in ('state_dict', 'model_state_dict', 'model') if isinstance(root, Mapping) and key in root and isinstance(root[key], Mapping)), None)
+    if model_key is not None:
+        root[model_key] = replace(root[model_key])
+    else:
+        root = replace(root)
+    torch.save(root, output)
+    return {'edited': len(replacements)}
+
+
 def main():
     try:
         request = json.load(sys.stdin)
@@ -126,6 +179,8 @@ def main():
             result = inspect(request["path"], torch)
         elif request["action"] == "sample":
             result = sample(request["path"], request["name"], request["windows"], torch)
+        elif request['action'] == 'edit':
+            result = edit(request['path'], request['output'], request['edits'], torch)
         else:
             raise ValueError("Unknown action.")
         print(json.dumps(dict(ok=True, data=result), allow_nan=False))

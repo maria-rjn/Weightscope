@@ -62,6 +62,17 @@ Open **Model details → Edit metadata**, enter a key and value, and stage an up
 
 Safetensors and ONNX metadata properties use strings. ONNX producer, graph, and opset fields are not metadata properties. GGUF preserves existing scalar types and supports new scalar keys with a selected type. Enter booleans as `true`/`false`, numbers as JSON numbers, and 64-bit integers as exact decimal text. Untouched GGUF arrays are copied in full, including tokenizer entries beyond the preview; arrays cannot be rewritten from a truncated preview. `general.alignment` is fixed to preserve the storage layout. PyTorch metadata editing and multi-blob Ollama editing are not supported.
 
+## Edit tensor weights
+
+Select a tensor and use **Edit tensor** in its drawer. Choose **Scale weights**, **Set weights to zero**, or **Replace from checkpoint**, then **Stage tensor edit**. Replacement opens a checkpoint picker and a list of compatible tensors. Review the pending plan and save a new checkpoint. Each tensor has one staged operation applied to its original values; staging again replaces that operation.
+
+- Native scaling and zeroing support F64/F32/F16/BF16 inline tensors in safetensors, GGUF, and ONNX. ONNX packed/repeated F32/F64 fields are also supported. Arithmetic on ONNX quantization codes is unavailable.
+- GGUF Q4_0/Q4_1/Q5_0/Q5_1/Q8_0 and Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/Q8_K support scaling and zeroing by changing their block scales and offsets while retaining encoded weight codes. This keeps the existing quantization precision; it does not requantize the tensor. F16/BF16 writes round to nearest, ties to even. Scaling rejects non-finite inputs and overflow; zeroing can clear non-finite values.
+- Replacement copies all stored tensor bytes from a matching shape, dtype, and storage layout, including known-size quantized blocks. It does not change other tensors or quantization metadata. Donors changed since selection must be selected again.
+- PyTorch supports dense real tensor replacement and F64/F32/F16/BF16 scaling/zeroing in a trusted workspace. The helper loads and reserializes on CPU, retaining checkpoint wrappers, scalar metadata, optimizer state, and unselected tensors. Selected tensors receive separate storage so edits do not change unselected aliases. This operation may require substantial RAM, unlike native streaming edits.
+
+External ONNX weights, variable-length typed storage, unknown block layouts, and multi-blob Ollama safetensors are inspect-only. FP8 and integer inline tensors support compatible replacement; arithmetic is unavailable. Each drawer explains the available operations. Native edits stream whole tensors with bounded buffers; saved structure is validated before publication. These operations edit checkpoint data and do not train or evaluate a model.
+
 ## Format support
 
 | Format | Metadata / tree | Numerical analysis | Runtime |

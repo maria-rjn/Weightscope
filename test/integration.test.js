@@ -44,6 +44,63 @@ assert original['epoch'] == copy['epoch']
 `, dir], { timeout: 120000 });
 });
 
+test('tensor edits agree with PyTorch rounding and official GGUF dequantization', { skip: !pythonPath }, async () => {
+  await execFile(pythonPath, ['-c', `
+import os, sys, torch
+from safetensors.torch import save_file
+root = sys.argv[1]
+values = {}
+for name, dtype in [('fp16', torch.float16), ('bf16', torch.bfloat16)]:
+    tensor = torch.arange(65536, dtype=torch.int32).to(torch.int16).view(dtype)
+    tensor[~torch.isfinite(tensor)] = 0
+    values[name] = tensor
+    expected = (tensor.to(torch.float64) * .5).to(dtype).view(torch.int16).numpy().tobytes()
+    open(os.path.join(root, name + '.bin'), 'wb').write(expected)
+save_file(values, os.path.join(root, 'rounding.safetensors'))
+`, dir], { timeout: 120000 });
+  const rounding = await backend.inspect(path.join(dir, 'rounding.safetensors'));
+  const roundedPath = path.join(dir, 'rounded.safetensors');
+  await saveCheckpoint(rounding, roundedPath, { tensors: rounding.tensors.map(t => ({ name: t.name, operation: 'scale', factor: .5 })) });
+  const rounded = await backend.inspect(roundedPath), bytes = await fs.readFile(roundedPath);
+  for (const tensor of rounded.tensors) assert.deepEqual(bytes.subarray(tensor.storage.offset, tensor.storage.offset + tensor.bytes), await fs.readFile(path.join(dir, `${tensor.name}.bin`)));
+  const { tensorCapabilities } = require('../src/checkpoint');
+  const gguf = await backend.inspect(path.join(dir, 'official.gguf'));
+  await saveCheckpoint(gguf, path.join(dir, 'scaled.gguf'), { tensors: gguf.tensors.filter(t => tensorCapabilities(gguf, t).operations.includes('scale')).map(t => ({ name: t.name, operation: 'scale', factor: .5 })) });
+  await execFile(pythonPath, ['-c', `
+import os, sys, gguf, numpy as np
+root = sys.argv[1]
+original = gguf.GGUFReader(os.path.join(root, 'official.gguf'))
+changed = gguf.GGUFReader(os.path.join(root, 'scaled.gguf'))
+for a, b in zip(original.tensors, changed.tensors):
+    assert a.name == b.name
+    expected = gguf.quants.dequantize(a.data, a.tensor_type) * .5
+    actual = gguf.quants.dequantize(b.data, b.tensor_type)
+    np.testing.assert_array_equal(actual, expected)
+`, dir], { timeout: 120000 });
+});
+
+test('PyTorch Save As edits preserve wrappers, unselected aliases, and original files', { skip: !pythonPath }, async () => {
+  await execFile(pythonPath, ['-c', `
+import os, sys, torch
+root = sys.argv[1]
+t = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+torch.save({'state_dict': {'a': t, 'alias': t, 'transpose': t.T}, 'epoch': 7, 'optimizer': {'step': 3}}, os.path.join(root, 'aliases.pt'))
+torch.save({'state_dict': {'replacement': torch.full((2, 3), 9.)}}, os.path.join(root, 'donor.pt'))
+`, dir], { timeout: 120000 });
+  const model = await backend.inspect(path.join(dir, 'aliases.pt'), options), donor = await backend.inspect(path.join(dir, 'donor.pt'), options);
+  const original = await fs.readFile(model.path), output = path.join(dir, 'aliases-edited.pt');
+  await saveCheckpoint(model, output, { ...options, tensors: [{ name: 'a', operation: 'replace', source: { model: donor, name: 'replacement' } }, { name: 'transpose', operation: 'zero' }] });
+  const edited = await backend.inspect(output, options);
+  assert.deepEqual(await backend.sample(edited, 'a', options), [9, 9, 9, 9, 9, 9]);
+  assert.deepEqual(await backend.sample(edited, 'alias', options), [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual(await backend.sample(edited, 'transpose', options), [0, 0, 0, 0, 0, 0]);
+  assert.equal(edited.metadata.epoch, 7); assert.deepEqual(await fs.readFile(model.path), original);
+  await execFile(pythonPath, ['-c', `import torch,sys; assert torch.load(sys.argv[1],weights_only=True)['optimizer']['step'] == 3`, output]);
+  const scaled = path.join(dir, 'aliases-scaled.pt');
+  await saveCheckpoint(model, scaled, { ...options, tensors: [{ name: 'a', operation: 'scale', factor: 2 }] });
+  assert.deepEqual(await backend.sample(await backend.inspect(scaled, options), 'a', options), [0, 2, 4, 6, 8, 10]);
+});
+
 test('upstream safetensors and ONNX serialization agrees with native readers', { skip: !pythonPath }, async () => {
   const safe = await backend.inspect(path.join(dir, 'official.safetensors'));
   const onnx = await backend.inspect(path.join(dir, 'official.onnx'));

@@ -4,7 +4,7 @@
   const vscode = acquireVsCodeApi(), view = WeightScopeView, root = document.getElementById('app'), saved = vscode.getState() || {}, PAGE = 40;
   const state = { tab: saved.tab || 'weights', query: saved.query || '', dtype: '', page: 0, groupPage: 0, group: '', selected: saved.selected || '',
     stats: new Map(), rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffPage: 0, diffDetailsOpen: false,
-    metadataEdits: [], busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
+    metadataEdits: [], tensorEdits: [], busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
   const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected });
   const number = n => n == null ? '—' : new Intl.NumberFormat('en', { maximumSignificantDigits: 5 }).format(n);
@@ -55,10 +55,11 @@
     shell.append(drawer); root.append(shell); renderPendingEdits(); renderTab();
   }
   function renderPendingEdits() {
-    const n = document.getElementById('pending-edits'); if (!n) return; n.replaceChildren(); n.hidden = !state.metadataEdits.length;
+    const n = document.getElementById('pending-edits'); if (!n) return; n.replaceChildren(); const total = state.metadataEdits.length + state.tensorEdits.length; n.hidden = !total;
     if (n.hidden) return;
-    add(n, el('h3', '', `${state.metadataEdits.length} pending metadata edits`), el('p', 'subtle', 'Edits apply to a new checkpoint when you save. Statistics describe the original. Pending edits are kept only while this inspector is open.'));
+    add(n, el('h3', '', `${total} pending ${total === 1 ? 'edit' : 'edits'}`), el('p', 'subtle', 'Edits apply to a new checkpoint when you save. Statistics describe the original. Pending edits are kept only while this inspector is open.'));
     const list = el('ul'); for (const edit of state.metadataEdits) list.append(el('li', '', `${edit.key}: ${edit.value === null ? 'remove' : String(edit.value).slice(0, 120)}`));
+    for (const edit of state.tensorEdits) list.append(el('li', '', `${edit.name}: ${edit.operation === 'scale' ? `multiply by ${edit.factor}` : edit.operation === 'replace' ? `replace from ${edit.sourceName} in ${edit.sourcePath}` : 'set weights to zero'}`));
     add(n, list, add(el('div', 'actions'), action('Save checkpoint as…', 'saveCheckpoint', {}, 'primary'), action('Discard pending edits', 'discardEdits'))); updateBusy();
   }
   function metadataEditor() {
@@ -82,6 +83,21 @@
     }, 'primary'); apply.dataset.action = 'stageMetadata';
     const remove = button('Stage removal', () => send('stageMetadata', { key: key.value, value: null })); remove.dataset.action = 'stageMetadata';
     add(n, key, type, current, value, add(el('div', 'actions'), apply, remove)); return n;
+  }
+  function tensorEditor(t) {
+    const n = el('section', 'edit-form'); n.append(el('h3', '', 'Edit tensor'));
+    const support = t.editing || { operations: [], reason: 'Tensor editing is unavailable for this preview.' };
+    if (!support.operations.length) { n.append(el('p', 'subtle', support.reason)); return n; }
+    n.append(el('p', 'subtle', 'Stage one operation for this tensor, then save a new checkpoint. Staging again replaces its previous operation.'));
+    if (support.reason) n.append(el('p', 'subtle', support.reason));
+    const names = { scale: 'Scale weights', zero: 'Set weights to zero', replace: 'Replace from checkpoint' };
+    const factor = input('Scale factor', '1', () => {}); factor.type = 'number'; factor.step = 'any';
+    const op = select(support.operations.map(o => [o, names[o]]), support.operations.includes('scale') ? 'scale' : support.operations[0], v => { factor.hidden = v !== 'scale'; }, 'Tensor operation'); factor.hidden = op.value !== 'scale';
+    const apply = button('Stage tensor edit', () => {
+      if (op.value === 'scale' && (!factor.value.trim() || !Number.isFinite(Number(factor.value)))) { showError('Enter a finite scale factor.'); return; }
+      send('stageTensor', { name: t.name, operation: op.value, ...(op.value === 'scale' ? { factor: Number(factor.value) } : {}) });
+    }, 'primary'); apply.dataset.action = 'stageTensor';
+    add(n, op, factor, apply); return n;
   }
   function renderTab() {
     const content = document.getElementById('content'); if (!content) return; content.replaceChildren();
@@ -150,6 +166,7 @@
     if (t.valueBasis) parent.append(el('p', 'subtle', t.valueBasis));
     if (decoded) parent.append(el('p', 'subtle', 'Statistics use dequantized weight values.'), disclosure('Stored layout', pairs([['Storage dtype', t.dtype], ['Stored shape', shape(t)], ['Stored values', integer(t.elements)], ['Scale tensor', t.quantization.scaleTensor], ['Decoded dtype', t.quantization.decodedDtype]])));
     if (t.quantization) parent.append(disclosure('Quantization', pairs([['Scheme', t.quantization.scheme || t.dtype], ['Bits per weight', number(t.quantization.bitsPerWeight)], ['Values per block', number(t.quantization.blockSize)]]), disclosure('Raw quantization details', el('pre', '', JSON.stringify(t.quantization, null, 2)))));
+    parent.append(tensorEditor(t));
   }
   function renderDiffDetail(parent) {
     const row = state.rows.find(r => r.name === state.selectedDiff); if (!row) { state.drawerOpen = false; if (parent.open) parent.close(); return; }
@@ -223,7 +240,7 @@
     else if (m.type === 'busy') { state.busy = true; state.busyLabel = m.label; for (const id of ['error', 'drawer-error']) { const n = document.getElementById(id); if (n) n.hidden = true; } updateBusy(); }
     else if (m.type === 'idle') { state.busy = false; updateBusy(); }
     else if (m.type === 'error') showError(m.message);
-    else if (m.type === 'edits') { state.metadataEdits = m.metadata; renderPendingEdits(); }
+    else if (m.type === 'edits') { state.metadataEdits = m.metadata; state.tensorEdits = m.tensors || []; renderPendingEdits(); }
     else if (m.type === 'checkpointSaved') { state.savedPath = m.path; const n = document.getElementById('error'); if (n) { n.className = 'notice'; n.setAttribute('role', 'status'); n.textContent = `Checkpoint copy saved: ${m.path}`; n.hidden = false; } }
   });
   buildShell(); send('ready');
