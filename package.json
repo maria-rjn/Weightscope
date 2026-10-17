@@ -2,7 +2,7 @@
   "name": "weightscope",
   "displayName": "WeightScope — Model & Checkpoint Inspector",
   "description": "Inspect model layers, tensor health, precision and checkpoint drift locally, on demand.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "weightscope-local",
   "license": "MIT",
   "repository": {
@@ -85,6 +85,9 @@
           },
           {
             "filenamePattern": "*.pth"
+          },
+          {
+            "filenamePattern": "**/manifests/*/*/*/*"
           }
         ],
         "priority": "default"
