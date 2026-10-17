@@ -11,10 +11,12 @@ const ollama = require('./ollama');
 const sharded = require('./sharded');
 const mxfp8 = require('./quantization/mxfp8');
 
+const UNTRUSTED = 'PyTorch inspection requires a trusted VS Code workspace.';
+
 function identity(s) { return `${s.size}:${s.mtimeMs}:${s.ctimeMs}:${s.ino}`; }
 async function assertCurrent(model) {
   if (identity(await fs.stat(model.path)) !== model.identity) throw new Error('The checkpoint changed on disk. Refresh the inspector before analyzing it.');
-  for (const item of model.dependencies || []) if (identity(await fs.stat(item.path)) !== item.identity) throw new Error(`${model.source?.kind === 'sharded' ? 'The safetensors index' : 'An Ollama manifest'} changed on disk. Refresh the inspector before analyzing it.`);
+  for (const item of model.dependencies || []) if (identity(await fs.stat(item.path)) !== item.identity) throw new Error(`${model.source?.kind === 'sharded' ? `The ${sharded.FORMATS[model.format].title} index` : 'An Ollama manifest'} changed on disk. Refresh the inspector before analyzing it.`);
 }
 function summarize(model) {
   const dtypes = Object.create(null);
@@ -33,7 +35,7 @@ function publicModel(model) {
     summary: model.summary, nodes: model.nodes || [], tensors: model.tensors.map(({ storage, ...t }) => t) };
 }
 function pythonRequest(request, options = {}) {
-  if (!options.trusted) return Promise.reject(new Error('PyTorch inspection requires a trusted VS Code workspace.'));
+  if (!options.trusted) return Promise.reject(new Error(UNTRUSTED));
   const exe = options.pythonPath || (process.platform === 'win32' ? 'py' : 'python3');
   const args = [...(!options.pythonPath && process.platform === 'win32' ? ['-3'] : []), '-I', path.join(__dirname, '..', 'python', 'inspect_pt.py')];
   return new Promise((resolve, reject) => {
@@ -63,21 +65,22 @@ async function inspect(file, options = {}) {
   cancelled(options.signal);
   if (ollama.manifestLocation(file)) return inspectOllama(file, options);
   // Opening any shard opens the whole checkpoint. A shard whose set cannot be assembled still opens on its own.
+  const format = sharded.shardFormat(file), single = format ? { ...options, format } : options;
   try { const set = await sharded.locate(file); if (set) return await inspectSharded(file, set, options); }
   catch (e) {
     if (sharded.isIndex(file) || options.signal?.aborted) throw e;
-    const model = await inspectFile(file, options);
+    const model = await inspectFile(file, single);
     model.warnings.push(`Showing this shard only: ${e.message} Totals and comparisons cover this file alone.`);
     return model;
   }
-  return inspectFile(file, options);
+  return inspectFile(file, single);
 }
 async function inspectFile(file, options = {}) {
   const stat = await fs.stat(file);
   if (!stat.isFile()) throw new Error('Choose a model file, not a directory.');
   const ext = path.extname(file).toLowerCase();
   let parsed;
-  if (['.pt', '.pth'].includes(ext)) parsed = await pythonRequest({ action: 'inspect', path: file }, options);
+  if (['.pt', '.pth'].includes(ext) || options.format === 'pytorch') parsed = await pythonRequest({ action: 'inspect', path: file }, options);
   else {
     const reader = await Reader.open(file, options.signal);
     try {
@@ -85,7 +88,9 @@ async function inspectFile(file, options = {}) {
       else if (ext === '.gguf') parsed = await parseGGUF(reader);
       else if (ext === '.onnx') parsed = await parseONNX(reader);
       else if (reader.size >= 4 && (await reader.read(0, 4)).toString('ascii') === 'GGUF') parsed = await parseGGUF(reader);
-      else throw new Error('Supported model files: .safetensors (or a sharded .safetensors.index.json), .gguf, .onnx, .pt, .pth, or a GGUF blob. Use Open Ollama Model for downloaded models.');
+      // .bin files are read as PyTorch only as Hugging Face shards; other .bin files are often raw or external weight data.
+      else if (ext === '.bin') throw new Error('WeightScope opens .bin files as PyTorch only when they are Hugging Face shards, named like pytorch_model-00001-of-00002.bin or listed in a .bin.index.json. Open the shard index or a .pt/.pth checkpoint instead.');
+      else throw new Error('Supported model files: .safetensors, .gguf, .onnx, .pt, .pth, Hugging Face shard indexes (.safetensors.index.json or .bin.index.json) and their shards, or a GGUF blob. Use Open Ollama Model for downloaded models.');
     } finally { await reader.close(); }
   }
   const model = { ...parsed, path: file, identity: identity(stat), fileBytes: stat.size };
@@ -158,6 +163,7 @@ async function inspectOllama(file, options) {
   return model;
 }
 async function inspectSharded(file, set, options) {
+  if (set.format === 'pytorch' && !options.trusted) throw new Error(UNTRUSTED);
   const missing = await sharded.missingFiles(set.directory, set.files);
   if (missing.length) throw new Error(`${missing.length} of ${set.files.length} shards listed in ${set.indexPath ? path.basename(set.indexPath) : 'this set'} are missing, including ${missing[0]}. The download may be incomplete.`);
   const tensors = [], shards = [], stored = new Map(), warnings = [...set.warnings];
@@ -165,7 +171,11 @@ async function inspectSharded(file, set, options) {
   let fileBytes = 0, unindexed = 0;
   for (const name of set.files) {
     cancelled(options.signal);
-    const shard = await inspectFile(path.join(set.directory, name), { ...options, format: 'safetensors' });
+    let shard;
+    try { shard = await inspectFile(path.join(set.directory, name), { ...options, format: set.format }); }
+    catch (e) { if (options.signal?.aborted) throw e; throw new Error(`Cannot read shard ${name}: ${e.message}`); }
+    // Each PyTorch shard repeats the helper's interpretation notes; keep one copy.
+    for (const warning of shard.warnings) if (!warnings.includes(warning)) warnings.push(warning);
     fileBytes = safeInteger(fileBytes + shard.fileBytes, 'Total shard bytes');
     shards.push({ file: name, path: shard.path, bytes: shard.fileBytes, tensors: shard.tensors.length, metadata: shard.metadata });
     for (const tensor of shard.tensors) {
@@ -180,7 +190,7 @@ async function inspectSharded(file, set, options) {
   }
   for (const [name, listed] of set.weightMap || []) if (!stored.has(name)) throw new Error(`The index lists ${name} in ${listed}, but that shard does not contain it.`);
   if (unindexed) warnings.push(`${unindexed} stored tensor(s) are missing from the index weight_map. They are shown here, but loaders that follow the index may ignore them.`);
-  const model = { format: 'safetensors', tensors, warnings, path: file, identity: identity(await fs.stat(file)), fileBytes, dependencies,
+  const model = { format: set.format, tensors, warnings, path: file, identity: identity(await fs.stat(file)), fileBytes, dependencies,
     metadata: { index: set.indexPath ? set.metadata : null, shards: shards.map(({ file, metadata }) => ({ file, metadata })) },
     source: { kind: 'sharded', name: set.name, indexPath: set.indexPath, shards: shards.map(({ metadata, ...shard }) => shard) },
     protectedPaths: [...dependencies.map(d => d.path), ...shards.map(s => s.path)] };
@@ -267,15 +277,16 @@ async function sample(model, name, options = {}) {
   if (!tensor) throw new Error('Unknown tensor.');
   const windows = sampleWindows(tensor.logicalElements ?? tensor.elements, options.sampleSize || 32768);
   let values;
+  // Shard and Ollama blob tensors name the file that stores them; it is checked before and after each read.
+  const storageFile = tensor.storage.file;
+  const blob = model.source?.kind === 'sharded' ? `Shard ${tensor.shard}` : 'An Ollama weight blob';
+  if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error(`${blob} changed on disk. Refresh the inspector before analyzing it.`);
   if (model.format === 'pytorch') {
-    const result = await pythonRequest({ action: 'sample', path: model.path, name, windows }, options);
+    const result = await pythonRequest({ action: 'sample', path: storageFile || model.path, name, windows }, options);
     values = result.map(v => v === 'NaN' ? NaN : v === 'Infinity' ? Infinity : v === '-Infinity' ? -Infinity : v);
   } else {
     const external = tensor.storage.kind === 'external' ? await externalStorage(model, tensor) : null;
     const current = external?.tensor || tensor;
-    const storageFile = tensor.storage.file;
-    const blob = model.source?.kind === 'sharded' ? `Shard ${tensor.shard}` : 'An Ollama weight blob';
-    if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error(`${blob} changed on disk. Refresh the inspector before analyzing it.`);
     const scale = tensor.storage.scale;
     if (scale && identity(await fs.stat(scale.file)) !== scale.identity) throw new Error('An Ollama scale blob changed on disk. Refresh the inspector before analyzing it.');
     const reader = await Reader.open(external?.file || storageFile || model.path, options.signal);
@@ -287,10 +298,10 @@ async function sample(model, name, options = {}) {
         values = await mxfp8.sample(reader, scaleReader, current, windows);
       } else values = current.storage.kind === 'onnx-typed' ? await typedValues(reader, current, windows) : await rawValues(reader, current, windows);
       if (external && identity(await fs.stat(external.file)) !== external.identity) throw new Error('External ONNX weights changed during analysis. Retry the operation.');
-      if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error(`${blob} changed during analysis. Refresh the inspector.`);
       if (scale && identity(await fs.stat(scale.file)) !== scale.identity) throw new Error('An Ollama scale blob changed during analysis. Refresh the inspector.');
     } finally { if (scaleReader && scaleReader !== reader) await scaleReader.close(); await reader.close(); }
   }
+  if (storageFile && identity(await fs.stat(storageFile)) !== tensor.storage.identity) throw new Error(`${blob} changed during analysis. Refresh the inspector.`);
   await assertCurrent(model); cancelled(options.signal);
   return values;
 }

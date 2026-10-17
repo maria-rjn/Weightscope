@@ -11,6 +11,8 @@ In VS Code settings, set `weightscope.pythonPath` to the full path of `.venv/bin
 
 Use a trusted workspace. The helper uses `torch.load(..., weights_only=True, map_location='cpu')` and **never falls back to unrestricted pickle loading**. Metadata inspection uses PyTorch FakeTensorMode to avoid allocating complete tensor storage. Modern ZIP checkpoints use memory mapping. Each operation runs in a cancellable Python subprocess with a two-minute timeout.
 
+Hugging Face `.bin` shards (`pytorch_model-00001-of-0000N.bin` with `pytorch_model.bin.index.json`) open as one model. Opening runs the helper once per shard, and analysis loads only the shard that stores the selected tensor. Other `.bin` files are not treated as PyTorch checkpoints.
+
 Supported checkpoint layouts include a plain tensor, a plain state dict, or dictionaries containing `state_dict`, `model_state_dict`, or a mapping-valued `model`. Optimizer slots in other sections are excluded when a recognized model wrapper exists. Dense non-contiguous tensors are sampled at logical row-major indices without copying their entire storage.
 
 If a checkpoint contains custom classes, TorchScript code, sparse/complex/quantized tensors, or objects incompatible with restricted loading, export a plain dense state dict or safetensors checkpoint in its trusted training environment. Restricted loading reduces code-execution risks; use a current patched PyTorch release for files from unfamiliar sources. No model functions are called.

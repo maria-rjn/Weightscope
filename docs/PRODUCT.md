@@ -24,7 +24,7 @@ Version 0.3.0 adds local Ollama catalog discovery, original GGUF blob inspection
 
 The visualization update replaces overview cards with aligned size bars and comparison cards with a layer-by-tensor-role matrix. Roles are literal suffixes of tensor names, with a generic fallback and collision-preserving cells; they do not imply a model architecture or execution graph. Relative L2 uses one scale across all pages and filters, while coverage, precision, structural changes, and unavailable analysis retain separate labels. Tensor distributions have labeled axes, accessible bin counts, and shared-bin baseline/target overlays based on existing bounded samples. All rendering stays local with no runtime plotting dependencies.
 
-Sharded Hugging Face safetensors checkpoints open as one model from their index or any shard, so drift analysis works on multi-gigabyte models without merging files. Index weight maps are checked against shard headers; inconsistent sets fail explicitly instead of silently comparing a partial model.
+Sharded Hugging Face safetensors checkpoints open as one model from their index or any shard, so drift analysis works on multi-gigabyte models without merging files. Index weight maps are checked against shard headers; inconsistent sets fail explicitly instead of silently comparing a partial model. Older PyTorch `.bin` shard sets open the same way through the restricted PyTorch helper, so a repository's `.bin` and safetensors releases can be compared directly.
 
 Explicit boundaries keep results trustworthy: name hierarchy is not a recovered execution graph; stored-element counts are not unique trainable counts; sample matches are not exact equality. Unsupported numerical decoders produce clear explanations rather than fabricated values.
 

@@ -5,6 +5,8 @@
 - Open sharded Hugging Face safetensors checkpoints as one model from the `.safetensors.index.json` index or any `-0000X-of-0000N` shard, including Hugging Face cache snapshots. Totals, layer groups, statistics, and drift comparisons cover every shard.
 - Validate index weight maps against shard headers. Report missing shards, misplaced or duplicate tensors, and file names outside the model folder. Group complete shard sets that have no index by file name.
 - Show shard counts, a per-shard table, and each tensor's shard. Detect index and shard changes before analysis, and protect every shard from report overwrites.
+- Open sharded PyTorch checkpoints (`pytorch_model-0000X-of-0000N.bin` with `pytorch_model.bin.index.json`) as one model from the index or any `.bin` shard, with the same validation, fallback, change detection, and report protection as safetensors shards. Shards are read through the restricted PyTorch helper in trusted workspaces, and each tensor is sampled from its own shard.
+- Use only an index of the shard's own format when safetensors and `.bin` shards share a folder. Name the shard that could not be read when a set fails to open.
 
 - Align model layer size bars on a shared scale, with stored-value and storage-byte measures and explicit unknown sizes.
 - Replace comparison cards with a searchable, paginated layer-by-tensor-role heatmap of relative L2 drift, preserving structural, precision, non-finite, and sampling states.
