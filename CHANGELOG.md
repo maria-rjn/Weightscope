@@ -16,6 +16,11 @@
 - Honor per-tensor quantization metadata in mixed blobs and keep scale tensors and unquantized floating-point tensors available for inspection.
 - Explain missing scales, incompatible block layouts, and unsupported packed formats without computing misleading statistics.
 
+## 0.3.1
+
+- Open Ollama tag manifests directly in the WeightScope inspector instead of the JSON editor.
+- Document how to switch an already-open JSON manifest to the inspector.
+
 ## 0.3.0
 
 - Add Open Ollama Model and Compare Ollama Models commands with searchable local model/tag pickers and custom store selection.
