@@ -151,6 +151,7 @@ test('the inspector opens sharded checkpoints, names reports after them and prot
     commands: { registerCommand: () => ({ dispose() {} }), executeCommand: async () => {} },
     window: {
       registerCustomEditorProvider: (_view, p) => { provider = p; return { dispose() {} }; },
+      registerTreeDataProvider: () => ({ dispose() {} }),
       showOpenDialog: async options => { dialogs.push(options); return [uri(index)]; }, showSaveDialog: async options => { dialogs.push(options); return uri(saveFile); }, showInformationMessage() {}
     }
   };

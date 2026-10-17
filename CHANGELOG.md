@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add a WeightScope Activity Bar icon with a **Start** view. It has buttons to inspect a model file, open an Ollama model, compare checkpoints or Ollama models, and set up PyTorch, so you can start without opening a model first.
+
 ## 0.4.1
 
 - Use the Matrix Lens icon for the extension listing, inspector header, and editor tab.
