@@ -9,7 +9,7 @@ const { makeDemo } = require('./make-demo');
 const { store } = require('../test/ollama-fixtures');
 async function main() {
   const demo = await makeDemo();
-  const model = await backend.inspect(demo.base), target = await backend.inspect(demo.target);
+  const model = await backend.inspect(demo.base), target = await backend.inspect(demo.target), shardedModel = await backend.inspect(demo.sharded);
   const catalog = await store(path.join(__dirname, '..', 'output', 'preview', 'models'));
   const template = await catalog.blob('template', '{{ .System }}\nUser: {{ .Prompt }}\nAssistant:');
   const params = await catalog.blob('params', { temperature: 0.7, num_ctx: 8192 });
@@ -24,8 +24,8 @@ async function main() {
     try {
       const route = new URL(req.url, 'http://127.0.0.1').pathname;
       if (req.method === 'GET' && route === '/') {
-        const isOllama = new URL(req.url, 'http://127.0.0.1').searchParams.has('ollama');
-        const mock = `let previewOllama=${isOllama};window.acquireVsCodeApi=()=>({getState:()=>({}),setState:()=>{},postMessage:async m=>{try{if(m.type==='openOllama')previewOllama=true;const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...m,previewOllama})});for(const data of await r.json())window.dispatchEvent(new MessageEvent('message',{data}));}catch(e){window.dispatchEvent(new MessageEvent('message',{data:{type:'error',message:e.message}}));}}});`;
+        const query = new URL(req.url, 'http://127.0.0.1').searchParams, isOllama = query.has('ollama'), isSharded = query.has('sharded');
+        const mock = `let previewOllama=${isOllama},previewSharded=${isSharded};window.acquireVsCodeApi=()=>({getState:()=>({}),setState:()=>{},postMessage:async m=>{try{if(m.type==='openOllama')previewOllama=true;const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...m,previewOllama,previewSharded})});for(const data of await r.json())window.dispatchEvent(new MessageEvent('message',{data}));}catch(e){window.dispatchEvent(new MessageEvent('message',{data:{type:'error',message:e.message}}));}}});`;
         const nonce = crypto.randomBytes(24).toString('base64');
         res.setHeader('Content-Security-Policy', `default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'nonce-${nonce}'; connect-src 'self'`);
         res.setHeader('Content-Type', 'text/html'); res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WeightScope Preview</title><link rel="stylesheet" href="/styles.css"></head><body><div id="app"></div><script nonce="${nonce}">${mock}</script><script nonce="${nonce}" src="/model-view.js"></script><script nonce="${nonce}" src="/app.js"></script></body></html>`);
@@ -35,7 +35,7 @@ async function main() {
         res.setHeader('Content-Type', route.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(await fs.readFile(path.join(__dirname, '..', 'media', route.slice(1))));
       } else if (req.method === 'POST' && route === '/action') {
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 2 * 1024 * 1024) throw new Error('Request too large.'); }
-        const m = JSON.parse(body), result = [], base = m.previewOllama ? ollamaModel : model, comparison = m.previewOllama ? ollamaTarget : target;
+        const m = JSON.parse(body), result = [], base = m.previewOllama ? ollamaModel : m.previewSharded ? shardedModel : model, comparison = m.previewOllama ? ollamaTarget : target;
         if (m.type === 'ready' || m.type === 'refresh' || m.type === 'openOllama') result.push({ type: 'model', model: backend.publicModel(m.type === 'openOllama' ? ollamaModel : base), settings: options });
         else if (m.type === 'stats') result.push({ type: 'statistics', name: m.name, data: await backend.tensorStatistics(base, m.name, options) });
         else if (m.type === 'compare' || m.type === 'compareOllama') result.push({ type: 'comparison', target: backend.publicModel(comparison), rows });

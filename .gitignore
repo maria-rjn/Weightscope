@@ -13,5 +13,6 @@ examples/*.gguf
 examples/*.onnx
 examples/*.pt
 examples/*.pth
+examples/*/
 .playwright-cli/
 output/

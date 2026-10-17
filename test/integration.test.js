@@ -27,6 +27,14 @@ test('upstream safetensors and ONNX serialization agrees with native readers', {
   const external = await backend.inspect(path.join(dir, 'external.onnx'));
   assert.equal((await backend.tensorStatistics(external, 'layer.weight')).mean, 5.5);
 });
+test('upstream safetensors shards with a transformers-style index match the single-file checkpoint', { skip: !pythonPath }, async () => {
+  const model = await backend.inspect(path.join(dir, 'sharded', 'model-00002-of-00002.safetensors'));
+  const single = await backend.inspect(path.join(dir, 'official.safetensors'));
+  assert.equal(model.source.shards.length, 2); assert.equal(model.summary.parameters, single.summary.parameters);
+  assert.equal(model.summary.tensorBytes, model.metadata.index.total_size); assert.equal(model.byName.get('layer.bias').dtype, 'BF16');
+  for (const t of single.tensors) assert.equal(backend.structureDiff(model, single).find(r => r.name === t.name).status, 'unverified', t.name);
+  for (const name of ['layer.weight', 'layer.bias', 'noncontiguous']) assert.equal((await backend.compareTensor(model, single, name)).status, 'equal', name);
+});
 test('upstream GGUF writer and official dequantizers agree with scalar, primary and K decoders', { skip: !pythonPath }, async () => {
   const m = await backend.inspect(path.join(dir, 'official.gguf'));
   const expected = JSON.parse(await fs.readFile(path.join(dir, 'expected.json'), 'utf8'));

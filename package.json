@@ -23,6 +23,8 @@
   ],
   "keywords": [
     "safetensors",
+    "sharded",
+    "huggingface",
     "checkpoint",
     "gguf",
     "onnx",
@@ -85,6 +87,9 @@
           },
           {
             "filenamePattern": "*.pth"
+          },
+          {
+            "filenamePattern": "*.safetensors.index.json"
           }
         ],
         "priority": "default"
@@ -94,7 +99,7 @@
       "explorer/context": [
         {
           "command": "weightscope.open",
-          "when": "resourceExtname =~ /\\.(safetensors|gguf|onnx|pt|pth)$/",
+          "when": "resourceExtname =~ /\\.(safetensors|gguf|onnx|pt|pth)$/ || resourceFilename =~ /\\.safetensors\\.index\\.json$/",
           "group": "navigation"
         }
       ]
