@@ -6,6 +6,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const backend = require('./backend');
 const ollama = require('./ollama');
+const checkpoint = require('./checkpoint');
 const VIEW = 'weightscope.inspector';
 const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'] };
 
@@ -67,7 +68,7 @@ function activate(context) {
       panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
       let model, target, rows = [], stats = new Map(), busy = false, operation, disposed = false, ready = false;
       const post = data => { if (!disposed) panel.webview.postMessage(data); };
-      const payload = () => ({ type: 'model', model: backend.publicModel(model), settings: settings() });
+      const payload = () => ({ type: 'model', model: { ...backend.publicModel(model), editing: checkpoint.capabilities(model) }, settings: settings() });
       async function run(label, fn) {
         if (busy) { post({ type: 'error', message: 'An analysis is already running. Cancel it or wait for it to finish.' }); return; }
         busy = true; operation = new AbortController();
@@ -121,6 +122,19 @@ function activate(context) {
           post({ type: 'diffDone', remaining: rows.filter(r => ['unverified', 'unavailable'].includes(r.status)).length });
         }),
         cancel: () => operation?.abort(),
+        saveCheckpoint: () => run('Saving checkpoint copy…', async options => {
+          if (!model) throw new Error('Open a checkpoint first.');
+          const support = checkpoint.capabilities(model);
+          if (!support.save) throw new Error(support.reason);
+          const name = model.source?.name.replace(/[^a-zA-Z0-9._-]/g, '_') || path.basename(model.path, path.extname(model.path));
+          const directory = model.source ? os.homedir() : path.dirname(model.path);
+          const output = await vscode.window.showSaveDialog({ title: 'Save checkpoint as a new file', defaultUri: vscode.Uri.file(path.join(directory, `${name}.copy${support.extension}`)), filters: { Checkpoint: [support.extension.slice(1)] } });
+          if (!output) return;
+          if (output.scheme !== 'file') throw new Error('Save the checkpoint on the extension host.');
+          const result = await checkpoint.saveCheckpoint(model, output.fsPath, options);
+          post({ type: 'checkpointSaved', path: result.path });
+          vscode.window.showInformationMessage(`Checkpoint copy saved: ${result.path}`);
+        }),
         setup,
         export: async () => {
           if (!model) return;

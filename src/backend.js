@@ -261,4 +261,4 @@ async function compareTensor(base, target, name, options = {}) {
   const tensor = base.byName.get(name);
   return difference(left, right, tensor.logicalElements ?? tensor.elements, options.absoluteTolerance || 0);
 }
-module.exports = { inspect, publicModel, sample, tensorStatistics, compareTensor, structureDiff, pythonRequest };
+module.exports = { inspect, publicModel, sample, tensorStatistics, compareTensor, structureDiff, pythonRequest, assertCurrent, identity };

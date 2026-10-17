@@ -1,6 +1,6 @@
 # WeightScope
 
-A local, read-only VS Code extension for inspecting model checkpoints and answering **what changed, and are the weights healthy?**
+A local VS Code extension for inspecting model checkpoints and answering **what changed, and are the weights healthy?** Original checkpoints stay unchanged.
 
 Open `.safetensors`, `.gguf`, `.onnx`, `.pt`, or `.pth` files, or select a downloaded Ollama model from its local catalog. Explore a layer tree, shapes, stored parameter counts, dtype distribution, quantization metadata, tensor statistics, and checkpoint differences. Inspection and analysis run on demand. There are no uploads, network requests, or telemetry in the extension.
 
@@ -48,6 +48,13 @@ Layer groups follow the first numbered module in tensor names, or the enclosing 
 - Analyze numerical differences for one tensor or a batch: mean absolute delta, maximum absolute delta, RMSE, relative L2, cosine similarity, changed-value count, and non-finite mismatches. The tensor difference drawer and JSON report contain the full metrics.
 - Export a JSON report containing metadata, computed statistics, comparison results, coverage, and tolerance.
 - View ONNX operators and input/output names.
+- Save a validated checkpoint copy under a new name with **Tools → Save checkpoint as…**.
+
+## Save a checkpoint copy
+
+**Tools → Save checkpoint as…** streams a complete copy to a temporary file, validates its tensor structure, and publishes it under a new name. Existing files and aliases are never overwritten. Cancellation and validation failures remove the temporary file. Memory usage stays bounded while copying large models.
+
+Single-file safetensors, GGUF (including downloaded Ollama GGUF blobs), ONNX, and supported PyTorch checkpoints retain their format. PyTorch validation requires the same trusted workspace and interpreter as inspection. ONNX files with external weights must stay in the original directory to preserve relative references; external weights are shared, not copied. Multi-blob Ollama safetensors export is not supported.
 
 ## Format support
 

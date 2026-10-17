@@ -32,11 +32,11 @@
     parent.append(add(n, prev, el('span', '', `${page + 1} / ${last + 1}`), next));
   }
   function heading(title, description, actions) { return add(el('div', 'section-heading'), add(el('div'), el('h2', '', title), description && el('p', 'subtle', description)), actions); }
-  function showError(message) { for (const id of ['error', ...(state.drawerOpen ? ['drawer-error'] : [])]) { const n = document.getElementById(id); if (n) { n.textContent = message; n.hidden = false; } } }
+  function showError(message) { for (const id of ['error', ...(state.drawerOpen ? ['drawer-error'] : [])]) { const n = document.getElementById(id); if (n) { n.className = 'notice error'; n.setAttribute('role', 'alert'); n.textContent = message; n.hidden = false; } } }
   function buildShell() {
     root.replaceChildren(); const shell = el('div', 'shell'), top = el('header', 'topbar'), brand = el('div', 'brand'), logo = el('span', 'logo');
     add(logo, el('i'), el('i'), el('i')); add(brand, logo, el('span', '', 'WeightScope'));
-    const tools = el('details', 'tools-menu'); add(tools, el('summary', '', 'Tools'), add(el('div', 'tools-popover'), action('Open Ollama model', 'openOllama'), action('Compare Ollama model', 'compareOllama'), action('Refresh model', 'refresh'), action('Export JSON report', 'export'), action('PyTorch setup', 'setup')));
+    const tools = el('details', 'tools-menu'); add(tools, el('summary', '', 'Tools'), add(el('div', 'tools-popover'), action('Open Ollama model', 'openOllama'), action('Compare Ollama model', 'compareOllama'), action('Save checkpoint as…', 'saveCheckpoint'), action('Refresh model', 'refresh'), action('Export JSON report', 'export'), action('PyTorch setup', 'setup')));
     add(top, brand, add(el('div', 'actions'), add(el('span', 'local-label'), el('i', 'dot'), document.createTextNode('Local inspection')), tools, action('Compare checkpoint', 'compare', {}, 'primary')));
     const error = el('div', 'notice error'); error.id = 'error'; error.setAttribute('role', 'alert'); error.hidden = true;
     const busy = el('div', 'busy-line'); busy.id = 'busy'; busy.hidden = !state.busy; busy.setAttribute('role', 'status');
@@ -48,7 +48,7 @@
     const tabs = el('nav', 'tabs'); tabs.setAttribute('aria-label', 'Inspector sections');
     const choices = [['weights', 'Explore'], ['compare', 'Compare'], ['info', 'Model details']]; if (m.format === 'onnx') choices.push(['operators', 'Operators']);
     for (const [id, title] of choices) { const b = button(title, () => { state.tab = id; persist(); renderTab(); }); b.dataset.tab = id; b.className = `tab${state.tab === id ? ' active' : ''}`; b.setAttribute('aria-pressed', String(state.tab === id)); tabs.append(b); }
-    const content = el('main'); content.id = 'content'; add(shell, tabs, content, add(el('footer', 'footer'), el('span', '', 'Read only · Models stay on your machine'), el('span', '', 'Weight analysis runs when you request it')));
+    const content = el('main'); content.id = 'content'; add(shell, tabs, content, add(el('footer', 'footer'), el('span', '', 'Original files stay unchanged · Models stay on your machine'), el('span', '', 'Weight analysis runs when you request it')));
     const drawer = el('dialog', 'drawer'); drawer.id = 'tensor-detail'; drawer.setAttribute('aria-labelledby', 'drawer-title'); drawer.addEventListener('close', () => { state.drawerOpen = false; });
     drawer.addEventListener('click', e => { if (e.target === drawer && e.clientX < drawer.getBoundingClientRect().left) drawer.close(); });
     shell.append(drawer); root.append(shell); renderTab();
@@ -193,6 +193,7 @@
     else if (m.type === 'busy') { state.busy = true; state.busyLabel = m.label; for (const id of ['error', 'drawer-error']) { const n = document.getElementById(id); if (n) n.hidden = true; } updateBusy(); }
     else if (m.type === 'idle') { state.busy = false; updateBusy(); }
     else if (m.type === 'error') showError(m.message);
+    else if (m.type === 'checkpointSaved') { state.savedPath = m.path; const n = document.getElementById('error'); if (n) { n.className = 'notice'; n.setAttribute('role', 'status'); n.textContent = `Checkpoint copy saved: ${m.path}`; n.hidden = false; } }
   });
   buildShell(); send('ready');
 })();

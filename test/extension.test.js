@@ -46,6 +46,10 @@ test('extension activation, webview handshake, stats, comparison, export and che
     saveFile = path.join(dir, 'alias.json'); await fs.symlink(base, saveFile); await receive({ type: 'export' }); assert.match(posts.at(-1).message, /symlink/);
     await receive({ type: '__proto__' }); await receive({ type: 'stats', name: 'unknown' }); assert.match(posts.findLast(m => m.type === 'error').message, /Choose a tensor/);
     await receive({ type: 'refresh' }); assert.equal(posts.findLast(m => m.type === 'model').model.name, 'base.safetensors');
+    saveFile = path.join(dir, 'copy.safetensors'); await receive({ type: 'saveCheckpoint' });
+    assert.equal(posts.findLast(m => m.type === 'checkpointSaved').path, saveFile);
+    assert.deepEqual(await fs.readFile(saveFile), await fs.readFile(base));
+    saveFile = base; await receive({ type: 'saveCheckpoint' }); assert.match(posts.findLast(m => m.type === 'error').message, /never overwrites/);
     assert.throws(() => provider.openCustomDocument({ scheme: 'vscode-vfs' }), /extension host/);
   } finally { dispose?.(); await fs.rm(dir, { recursive: true, force: true }); }
 });
