@@ -1,8 +1,22 @@
-# Validation of version 0.3.0
+# Validation notes
+
+## Checkpoint editing verification — October 17, 2026
+
+The complete Save As, metadata editing, tensor editing, and saved-comparison stack passed `npm run check` and **76 tests with no failures or skips**, using the configured framework interpreter with `WEIGHTSCOPE_TEST_PYTHON="$PWD/.test-runtime/bin/python" npm test`.
+
+The eight framework integration tests include reopening metadata-edited checkpoints with upstream readers, ONNX checker validation, exhaustive finite F16/BF16 scaling/rounding against PyTorch, GGUF scaling against official dequantizers, PyTorch wrapper/optimizer retention, and preservation of unselected aliases. Native and mocked-host tests also cover combined edits, overwrite/alias protection, stale donors, failed-save cleanup, metadata differences, and saved-file comparison.
+
+The production frontend was exercised in the localhost browser preview for metadata staging, tensor scale staging, Save As, saved-file comparison, and numerical analysis. The browser console reported no errors or warnings. An installable `artifacts/weightscope-checkpoint-editing.vsix` was produced.
+
+A real Extension Development Host was not launched for these checks. The browser preview uses synthetic fixtures, and host dialogs and command routing are verified with a mocked VS Code API. No Windows/Linux host run, live Remote SSH test, inference evaluation, or multi-gigabyte editing benchmark was performed. These checks establish tested serialization and comparison behavior, not edited-model quality.
+
+The [developer README](DEVELOPER.md#testing) explains how to repeat the checks. The [user guide](USER_GUIDE.md#format-and-editing-support) records operation and storage limits. The earlier release verification record follows.
+
+## Version 0.3.0 verification record
 
 Verified on October 14, 2026, on macOS ARM64 with Node.js 24 and Python 3.12.
 
-## Automated checks
+### Automated checks
 
 `npm run check` passed JavaScript syntax, manifest, and packaged-asset checks.
 
@@ -14,7 +28,7 @@ Independent fixtures use torch 2.14.1, ONNX 1.23.2, safetensors 0.8.0, and gguf 
 
 Ollama MXFP8 decoding was checked against independent PyTorch E4M3FN and E8M0 conversions for all 65,536 code/scale combinations, including signed zeros, NaNs, float32 overflow, and underflow, in full and bounded samples. Native tests also cover byte order, block/row/expert boundaries, one-value samples, per-tensor metadata in mixed blobs, malformed or missing scale companions, companion-blob mutation before and during sampling, and comparisons with floating-point and packed checkpoints. Read instrumentation verifies that sampling fetches only the requested code bytes and the scales for their blocks.
 
-## Browser verification
+### Browser verification
 
 The production frontend was tested using the Playwright CLI against a localhost preview connected to real synthetic checkpoints. The redesigned overview shows seven layer groups with no default tensor table or open drawer. Group selection, tensor analysis, histogram rendering, Escape-to-close with focus restoration, batch diff analysis, and selection of a changed group worked. The change map reported eight changed tensors in `model.layers.2`, one added tensor, one removed tensor, and 26 full numerical matches. Selecting that group revealed exactly eight detailed tensor rows.
 
@@ -24,14 +38,14 @@ The Ollama view uses a generated local catalog containing the same synthetic che
 
 The MXFP8 inspector was also exercised with the real local TEV embedding tensor through a temporary localhost preview using the production frontend and backend. Analyze weights rendered a 32,768-value histogram with the logical shape/count and sampling denominator, a separate stored-layout disclosure, and 8-bit/32-value block metadata. At 620 × 900, the drawer had no horizontal overflow. The browser console had no errors or warnings.
 
-## Downloaded Ollama models
+### Downloaded Ollama models
 
 Read-only metadata inspection succeeded for all nine model/tag entries in the local Ollama store: six GGUF entries and three safetensors tensor collections. These included Gemma, Qwen, TranslateGemma, TEV, Flux, and Z-Image weights. Supported tensors were sampled directly from the original multi-gigabyte files; no copying, renaming, inference, or Ollama server was involved. All 201 packed MXFP8 weight tensors in the TEV model have validated decoding layouts. Its embedding tensor reports a logical shape of 248320 × 2560 (635,699,200 weights) while retaining its stored U32 shape of 248320 × 640 (158,924,800 words). A 32,768-value sample produced finite dequantized values spanning -0.0703125 to 0.078125. Other packed schemes such as FP4 retain explicit numerical-decoding limits. This was a compatibility check, not a cold-cache or full-weight performance benchmark.
 
-## Packaging and limits of verification
+### Packaging and limits of verification
 
 The official `@vscode/vsce` packager produced `artifacts/weightscope-0.3.0.vsix`. Packaged runtime sources were checked byte-for-byte against workspace sources. No runtime npm dependencies, downloaded models, or test environments are included.
 
 A real Extension Development Host was **not launched**. Extension activation, custom-editor setup, messaging, statistics, comparison, report export, and overwrite protection were verified using a mocked VS Code API. No multi-gigabyte performance benchmark, Windows/Linux host test, or live Remote SSH host test was run.
 
-Runtime-format boundaries and sampling semantics are documented in the README. Unsupported numerical formats produce explicit errors or warnings. The extension has not been published to a Marketplace.
+Runtime-format boundaries and sampling semantics are documented in the [user guide](USER_GUIDE.md#format-and-editing-support). Unsupported numerical formats produce explicit errors or warnings. The extension has not been published to a Marketplace.
