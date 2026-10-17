@@ -80,7 +80,7 @@ async function writeGGUF(model, reader, output, changes, io) {
   await io.copyRange(reader, output, model.layout.tensorInfoStart, model.layout.tensorInfoEnd - model.layout.tensorInfoStart);
   size += model.layout.tensorInfoEnd - model.layout.tensorInfoStart;
   await io.writeAll(output, Buffer.alloc((model.layout.alignment - size % model.layout.alignment) % model.layout.alignment));
-  await io.copyRange(reader, output, model.layout.dataStart, reader.size - model.layout.dataStart);
+  if (reader.size > model.layout.dataStart) await io.copyRange(reader, output, model.layout.dataStart, reader.size - model.layout.dataStart);
 }
 function varint(n) { let value = BigInt(n); const bytes = []; do { let b = Number(value & 127n); value >>= 7n; if (value) b |= 128; bytes.push(b); } while (value); return Buffer.from(bytes); }
 function field(no, data) { const b = typeof data === 'string' ? Buffer.from(data) : data; return Buffer.concat([varint(no * 8 + 2), varint(b.length), b]); }

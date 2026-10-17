@@ -34,6 +34,7 @@ function validate(model, edits) {
       if (!other || tensor.dtype !== other.dtype || JSON.stringify(tensor.shape) !== JSON.stringify(other.shape) || tensor.bytes !== other.bytes) throw new Error('Replacement tensors must have the same shape, dtype, and byte length.');
       if (model.format === 'pytorch' ? donor.format !== 'pytorch' : !ranges(other)) throw new Error('The replacement storage is incompatible. PyTorch replacement requires another PyTorch checkpoint.');
       if ((tensor.storage.kind === 'gguf-blocks') !== (other.storage.kind === 'gguf-blocks')) throw new Error('Replacement tensors must use the same encoded storage layout.');
+      if (donor.format === 'pytorch' && other.storage.editable === false) throw new Error('Replacement requires dense real, non-quantized PyTorch storage.');
       if (other.storage.file || other.analysisUnavailable) throw new Error('Choose a standalone replacement checkpoint.');
     }
   }

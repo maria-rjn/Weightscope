@@ -3,7 +3,7 @@
 (() => {
   const vscode = acquireVsCodeApi(), view = WeightScopeView, root = document.getElementById('app'), saved = vscode.getState() || {}, PAGE = 40;
   const state = { tab: saved.tab || 'weights', query: saved.query || '', dtype: '', page: 0, groupPage: 0, group: '', selected: saved.selected || '',
-    stats: new Map(), rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffPage: 0, diffDetailsOpen: false,
+    stats: new Map(), rows: [], metadataDiff: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffPage: 0, diffDetailsOpen: false,
     metadataEdits: [], tensorEdits: [], busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
   const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected });
@@ -45,6 +45,7 @@
     const m = state.model, s = m.summary, hero = el('section', 'hero');
     add(hero, add(el('div', 'file-line'), el('h1', '', m.name), el('span', 'badge', m.format.toUpperCase()), m.source?.kind === 'ollama' && el('span', 'badge', 'Ollama')), add(el('div', 'model-facts'), el('span', '', `${compact(s.parameters)} stored values`), el('span', '', `${integer(s.tensorCount)} tensors`), el('span', '', `${bytes(s.fileBytes)} ${m.source ? 'weights' : 'file'}`))); shell.append(hero);
     const pending = el('section', 'pending-edits'); pending.id = 'pending-edits'; pending.setAttribute('aria-live', 'polite'); shell.append(pending);
+    const saveStatus = el('section', 'save-status'); saveStatus.id = 'save-status'; saveStatus.setAttribute('aria-live', 'polite'); shell.append(saveStatus);
     if (m.warnings.length) shell.append(disclosure(`${m.warnings.length} format ${m.warnings.length === 1 ? 'note' : 'notes'}`, el('p', 'subtle', m.warnings.join(' ')))); add(shell, error, busy);
     const tabs = el('nav', 'tabs'); tabs.setAttribute('aria-label', 'Inspector sections');
     const choices = [['weights', 'Explore'], ['compare', 'Compare'], ['info', 'Model details']]; if (m.format === 'onnx') choices.push(['operators', 'Operators']);
@@ -52,7 +53,12 @@
     const content = el('main'); content.id = 'content'; add(shell, tabs, content, add(el('footer', 'footer'), el('span', '', 'Original files stay unchanged · Models stay on your machine'), el('span', '', 'Weight analysis runs when you request it')));
     const drawer = el('dialog', 'drawer'); drawer.id = 'tensor-detail'; drawer.setAttribute('aria-labelledby', 'drawer-title'); drawer.addEventListener('close', () => { state.drawerOpen = false; });
     drawer.addEventListener('click', e => { if (e.target === drawer && e.clientX < drawer.getBoundingClientRect().left) drawer.close(); });
-    shell.append(drawer); root.append(shell); renderPendingEdits(); renderTab();
+    shell.append(drawer); root.append(shell); renderPendingEdits(); renderSaveStatus(); renderTab();
+  }
+  function renderSaveStatus() {
+    const n = document.getElementById('save-status'); if (!n) return; n.replaceChildren(); n.hidden = !state.savedPath;
+    if (n.hidden) return;
+    add(n, el('h3', '', 'Last saved checkpoint'), el('p', 'path', state.savedPath), add(el('div', 'actions'), action('Compare saved with original', 'compareSaved', {}, 'primary'), action('Open saved checkpoint', 'openSaved'))); updateBusy();
   }
   function renderPendingEdits() {
     const n = document.getElementById('pending-edits'); if (!n) return; n.replaceChildren(); const total = state.metadataEdits.length + state.tensorEdits.length; n.hidden = !total;
@@ -182,6 +188,14 @@
     const analyze = action(overview.analyzed ? 'Analyze next batch' : 'Analyze weight changes', 'analyzeDiff', {}, 'primary'); analyze.id = 'analyze-comparison';
     add(pane, heading('Checkpoint comparison', 'Start with the change map. Open a group for tensor-by-tensor results.', add(el('div', 'actions'), action('Change target', 'compare', {}, 'ghost'), analyze)), add(el('div', 'compare-files'), el('span', '', state.model.name), el('span', 'file-arrow', '→'), el('span', '', state.target.name)));
     const summary = el('div'); summary.id = 'diff-summary'; const map = el('div'); map.id = 'change-map'; add(pane, summary, map);
+    const metadata = disclosure(`Metadata differences (${state.metadataDiff.length})`); metadata.open = state.metadataDiff.length > 0;
+    if (state.metadataDiff.length) {
+      const { wrap, body } = table(['Metadata key', 'Change', 'Original', 'Target']);
+      const preview = value => { const text = JSON.stringify(value); return text?.length > 400 ? `${text.slice(0, 400)}…` : text; };
+      for (const row of state.metadataDiff.slice(0, 200)) body.append(add(el('tr'), el('td', 'name-cell', row.key), add(el('td'), badge(row.status)), el('td', 'name-cell', row.status === 'added' ? 'Not present' : preview(row.left)), el('td', 'name-cell', row.status === 'removed' ? 'Not present' : preview(row.right))));
+      metadata.append(wrap); if (state.metadataDiff.length > 200) metadata.append(el('p', 'subtle', 'Showing the first 200 metadata differences. Export JSON for the complete list.'));
+    } else metadata.append(el('p', 'subtle', 'No differences found in the displayed metadata.'));
+    metadata.append(el('p', 'subtle', 'Metadata arrays use the inspector preview. Numerical tensor comparison runs separately.')); pane.append(metadata);
     const detail = el('details', 'diff-disclosure'); detail.id = 'diff-detail-list'; detail.open = state.diffDetailsOpen; detail.addEventListener('toggle', () => { state.diffDetailsOpen = detail.open; }); detail.append(el('summary', '', 'Tensor-by-tensor results'));
     const toolbar = el('div', 'toolbar'); add(toolbar, input('Search differences…', state.diffQuery, v => { state.diffQuery = v; state.diffPage = 0; renderDiffResults(); }), select([['attention', 'Changes & not analyzed'], ['', 'All tensors'], ...Object.entries(labels)], state.diffFilter, v => { state.diffFilter = v; state.diffPage = 0; renderDiffResults(); }, 'Filter comparison status')); const results = el('div'); results.id = 'diff-results'; add(detail, toolbar, results);
     add(pane, detail, disclosure('How comparison works', el('p', 'subtle', `Names are matched exactly. Each batch compares up to ${integer(state.settings.maxDiffTensors)} compatible tensors, with absolute tolerance ${number(state.settings.absoluteTolerance)}. Changes are target minus baseline. Sample matches do not prove that the whole tensor is unchanged.`))); content.append(pane); renderDiffOverview(); renderDiffResults();
@@ -234,14 +248,14 @@
     const m = event.data;
     if (m.type === 'model') { state.model = m.model; state.groups = view.groups(m.model.tensors); state.settings = m.settings; state.stats.clear(); state.rows = []; state.target = null; state.group = ''; state.page = 0; state.groupPage = 0; state.drawerOpen = false; buildShell(); }
     else if (m.type === 'statistics') { state.stats.set(m.name, m.data); if (state.drawerMode === 'tensor' && state.selected === m.name) renderDetail(); }
-    else if (m.type === 'comparison') { document.getElementById('tensor-detail')?.close(); state.drawerOpen = false; state.target = m.target; state.rows = m.rows; state.tab = 'compare'; state.diffPage = 0; state.diffGroup = ''; state.diffFilter = 'attention'; state.diffDetailsOpen = false; persist(); renderTab(); }
+    else if (m.type === 'comparison') { document.getElementById('tensor-detail')?.close(); state.drawerOpen = false; state.target = m.target; state.rows = m.rows; state.metadataDiff = m.metadata || []; state.tab = 'compare'; state.diffPage = 0; state.diffGroup = ''; state.diffFilter = 'attention'; state.diffDetailsOpen = false; persist(); renderTab(); }
     else if (m.type === 'diffRow') { const index = state.rows.findIndex(r => r.name === m.row.name); if (index >= 0) state.rows[index] = m.row; state.busyLabel = `Comparing tensor ${m.completed} / ${m.total}…`; updateBusy(); if (state.drawerMode === 'diff' && state.selectedDiff === m.row.name) renderDetail(); if (!state.diffTimer) state.diffTimer = setTimeout(() => { state.diffTimer = null; renderDiffOverview(); renderDiffResults(); }, 150); }
     else if (m.type === 'diffDone') { renderDiffOverview(); renderDiffResults(); }
     else if (m.type === 'busy') { state.busy = true; state.busyLabel = m.label; for (const id of ['error', 'drawer-error']) { const n = document.getElementById(id); if (n) n.hidden = true; } updateBusy(); }
     else if (m.type === 'idle') { state.busy = false; updateBusy(); }
     else if (m.type === 'error') showError(m.message);
     else if (m.type === 'edits') { state.metadataEdits = m.metadata; state.tensorEdits = m.tensors || []; renderPendingEdits(); }
-    else if (m.type === 'checkpointSaved') { state.savedPath = m.path; const n = document.getElementById('error'); if (n) { n.className = 'notice'; n.setAttribute('role', 'status'); n.textContent = `Checkpoint copy saved: ${m.path}`; n.hidden = false; } }
+    else if (m.type === 'checkpointSaved') { state.savedPath = m.path; renderSaveStatus(); }
   });
   buildShell(); send('ready');
 })();

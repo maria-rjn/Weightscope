@@ -12,12 +12,12 @@ test('extension activation, webview handshake, stats, comparison, export and che
   const base = path.join(dir, 'base.safetensors'), target = path.join(dir, 'target.safetensors');
   await F.safetensors(base, [{ name: 'layer.weight', values: [1, 2] }]);
   await F.safetensors(target, [{ name: 'layer.weight', values: [1, 3] }]);
-  const commands = new Map(), posts = [], uri = file => ({ scheme: 'file', fsPath: file, toString: () => `file:${file}` });
+  const commands = new Map(), posts = [], executed = [], uri = file => ({ scheme: 'file', fsPath: file, toString: () => `file:${file}` });
   let provider, receive, dispose, saveFile = path.join(dir, 'report.json');
   const vscode = {
     Uri: { file: uri, joinPath: (u, ...p) => uri(path.join(u.fsPath, ...p)) },
     workspace: { isTrusted: true, getConfiguration: () => ({ get: (_key, fallback) => fallback }), fs: { writeFile: (u, b) => fs.writeFile(u.fsPath, b) } },
-    commands: { registerCommand: (name, fn) => { commands.set(name, fn); return { dispose() {} }; }, executeCommand: async () => {} },
+    commands: { registerCommand: (name, fn) => { commands.set(name, fn); return { dispose() {} }; }, executeCommand: async (...args) => { executed.push(args); } },
     window: {
       registerCustomEditorProvider: (_view, p) => { provider = p; return { dispose() {} }; },
       showOpenDialog: async () => [uri(target)], showSaveDialog: async () => uri(saveFile), showInformationMessage() {}, showQuickPick: async items => items[0]
@@ -38,11 +38,13 @@ test('extension activation, webview handshake, stats, comparison, export and che
     assert.ok(panel.webview.html.indexOf('model-view.js') < panel.webview.html.indexOf('app.js'));
     assert.ok(commands.has('weightscope.compare'));
     await receive({ type: 'ready' }); assert.equal(posts.find(m => m.type === 'model').model.summary.parameters, 2);
+    await receive({ type: 'compareSaved' }); assert.match(posts.findLast(m => m.type === 'error').message, /Save a checkpoint/);
     await receive({ type: 'stats', name: 'layer.weight' }); assert.equal(posts.find(m => m.type === 'statistics').data.mean, 1.5);
     await receive({ type: 'compare' }); assert.equal(posts.find(m => m.type === 'comparison').rows[0].status, 'unverified');
     await receive({ type: 'analyzeDiff' }); assert.equal(posts.find(m => m.type === 'diffRow').row.metrics.maxAbs, 1);
     await receive({ type: 'export' }); const report = JSON.parse(await fs.readFile(saveFile, 'utf8')); assert.equal(report.comparison.rows[0].status, 'changed');
     saveFile = base; await receive({ type: 'export' }); assert.match(posts.at(-1).message, /cannot overwrite/);
+    saveFile = path.join(dir, 'report-hardlink.json'); await fs.link(base, saveFile); await receive({ type: 'export' }); assert.match(posts.at(-1).message, /hard link/);
     saveFile = path.join(dir, 'alias.json'); await fs.symlink(base, saveFile); await receive({ type: 'export' }); assert.match(posts.at(-1).message, /symlink/);
     await receive({ type: '__proto__' }); await receive({ type: 'stats', name: 'unknown' }); assert.match(posts.findLast(m => m.type === 'error').message, /Choose a tensor/);
     await receive({ type: 'refresh' }); assert.equal(posts.findLast(m => m.type === 'model').model.name, 'base.safetensors');
@@ -54,11 +56,23 @@ test('extension activation, webview handshake, stats, comparison, export and che
     await receive({ type: 'refresh' }); assert.match(posts.findLast(m => m.type === 'error').message, /Discard pending/);
     saveFile = path.join(dir, 'edited.safetensors'); await receive({ type: 'saveCheckpoint' });
     assert.equal((await require('../src/backend').inspect(saveFile)).metadata.description, 'edited');
+    await receive({ type: 'compareSaved', path: target });
+    assert.equal(posts.findLast(m => m.type === 'comparison').target.path, saveFile);
+    assert.equal(posts.findLast(m => m.type === 'comparison').metadata[0].key, 'description');
+    await receive({ type: 'openSaved' }); assert.equal(executed.at(-1)[1].fsPath, saveFile);
+    await receive({ type: 'export' }); assert.match(posts.findLast(m => m.type === 'error').message, /cannot overwrite/);
+    const savedCheckpoint = saveFile; saveFile = path.join(dir, 'saved-hardlink.json'); await fs.link(savedCheckpoint, saveFile);
+    await receive({ type: 'export' }); assert.match(posts.findLast(m => m.type === 'error').message, /hard link/);
+    const metadataReport = path.join(dir, 'metadata-report.json'); saveFile = metadataReport; await receive({ type: 'export' });
+    assert.equal(JSON.parse(await fs.readFile(metadataReport, 'utf8')).comparison.metadata[0].status, 'added');
     await receive({ type: 'discardEdits' }); assert.deepEqual(posts.findLast(m => m.type === 'edits').metadata, []);
     await receive({ type: 'stageTensor', name: 'layer.weight', operation: 'scale', factor: 3 });
     assert.equal(posts.findLast(m => m.type === 'edits').tensors[0].factor, 3);
     saveFile = path.join(dir, 'scaled.safetensors'); await receive({ type: 'saveCheckpoint' });
     assert.deepEqual(await require('../src/backend').sample(await require('../src/backend').inspect(saveFile), 'layer.weight'), [3, 6]);
+    await receive({ type: 'compareSaved' }); await receive({ type: 'analyzeDiff' });
+    assert.equal(posts.findLast(m => m.type === 'diffRow').row.metrics.maxAbs, 4);
+    await fs.unlink(saveFile); await receive({ type: 'compareSaved' }); assert.match(posts.findLast(m => m.type === 'error').message, /ENOENT/);
     await receive({ type: 'discardEdits' });
     await receive({ type: 'stageTensor', name: 'layer.weight', operation: 'replace' });
     assert.equal(posts.findLast(m => m.type === 'edits').tensors[0].sourcePath, target);

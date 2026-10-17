@@ -73,6 +73,12 @@ Select a tensor and use **Edit tensor** in its drawer. Choose **Scale weights**,
 
 External ONNX weights, variable-length typed storage, unknown block layouts, and multi-blob Ollama safetensors are inspect-only. FP8 and integer inline tensors support compatible replacement; arithmetic is unavailable. Each drawer explains the available operations. Native edits stream whole tensors with bounded buffers; saved structure is validated before publication. These operations edit checkpoint data and do not train or evaluate a model.
 
+## Compare a saved checkpoint with the original
+
+After saving, **Last saved checkpoint → Compare saved with original** loads the saved file as the comparison target. **Analyze weight changes** uses the existing full/sampled numerical comparison, tolerance, and change map. **Open saved checkpoint** opens a separate inspector for the new file. The original remains the baseline; staged edits are retained until discarded so you can revise or save the plan again.
+
+Comparisons also list added, removed, and changed metadata values. Metadata arrays use their inspector previews, so changes beyond a preview are not detected. This metadata comparison is separate from numerical weight analysis. JSON reports include the metadata differences, and report export cannot overwrite checkpoints saved by the current inspector. Comparison always reads the saved file from disk; unsaved plan changes are not part of the target.
+
 ## Format support
 
 | Format | Metadata / tree | Numerical analysis | Runtime |

@@ -1,4 +1,5 @@
 'use strict';
+const { isDeepStrictEqual } = require('node:util');
 function statistics(values, total, basis = 'Weight values') {
   let finite = 0, nan = 0, inf = 0, zero = 0, min = Infinity, max = -Infinity, mean = 0, m2 = 0, squareSum = 0;
   for (const v of values) {
@@ -48,4 +49,12 @@ function structureDiff(base, target) {
       dtypeChanged: Boolean(dtypeChanged), status: !left ? 'added' : !right ? 'removed' : shapeChanged ? 'shape-changed' : basisChanged ? 'basis-changed' : 'unverified' };
   });
 }
-module.exports = { statistics, difference, structureDiff };
+function metadataDiff(base, target) {
+  const left = base.metadata || {}, right = target.metadata || {};
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])].sort().flatMap(key => {
+    const hasLeft = Object.hasOwn(left, key), hasRight = Object.hasOwn(right, key);
+    if (hasLeft && hasRight && isDeepStrictEqual(left[key], right[key])) return [];
+    return [{ key, status: !hasLeft ? 'added' : !hasRight ? 'removed' : 'changed', left: hasLeft ? left[key] : null, right: hasRight ? right[key] : null }];
+  });
+}
+module.exports = { statistics, difference, structureDiff, metadataDiff };

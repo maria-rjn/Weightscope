@@ -8,6 +8,7 @@ const backend = require('../src/backend');
 const checkpoint = require('../src/checkpoint');
 const metadata = require('../src/metadata');
 const tensorEdits = require('../src/tensor-edits');
+const { metadataDiff } = require('../src/math');
 const { makeDemo } = require('./make-demo');
 const { store } = require('../test/ollama-fixtures');
 async function main() {
@@ -22,7 +23,8 @@ async function main() {
     return backend.inspect(await catalog.manifest('tiny-transformer', tag, [{ mediaType: 'application/vnd.ollama.image.tensor', digest: `sha256:${hash}`, size: data.length }, template, params]));
   }
   const ollamaModel = await ollamaCheckpoint(demo.base, 'base'), ollamaTarget = await ollamaCheckpoint(demo.target, 'finetuned');
-  const rows = backend.structureDiff(model, target), options = { sampleSize: 32768, maxDiffTensors: 500, absoluteTolerance: 0 };
+  let rows = backend.structureDiff(model, target), selectedTarget = target, savedPath;
+  const options = { sampleSize: 32768, maxDiffTensors: 500, absoluteTolerance: 0 };
   const edits = new Map(), tensorPlan = new Map();
   const publicModel = m => ({ ...backend.publicModel(m), editing: checkpoint.capabilities(m), tensors: backend.publicModel(m).tensors.map(t => ({ ...t, editing: checkpoint.tensorCapabilities(m, m.byName.get(t.name)) })) });
   const editPayload = () => ({ type: 'edits', metadata: [...edits.values()], tensors: [...tensorPlan.values()].map(e => ({ name: e.name, operation: e.operation, factor: e.factor, sourceName: e.source?.name, sourcePath: e.source?.model.path })) });
@@ -41,7 +43,13 @@ async function main() {
         res.setHeader('Content-Type', route.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(await fs.readFile(path.join(__dirname, '..', 'media', route.slice(1))));
       } else if (req.method === 'POST' && route === '/action') {
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 2 * 1024 * 1024) throw new Error('Request too large.'); }
-        const m = JSON.parse(body), result = [], base = m.previewOllama ? ollamaModel : model, comparison = m.previewOllama ? ollamaTarget : target;
+        const m = JSON.parse(body), result = [], base = m.previewOllama ? ollamaModel : model;
+        if (m.type === 'compare' || m.type === 'compareOllama' || m.type === 'compareSaved') {
+          if (m.type === 'compareSaved' && !savedPath) throw new Error('Save a checkpoint copy first.');
+          selectedTarget = m.type === 'compareSaved' ? await backend.inspect(savedPath) : m.previewOllama ? ollamaTarget : target;
+          rows = backend.structureDiff(base, selectedTarget);
+        }
+        const comparison = selectedTarget;
         if (m.type === 'ready' || m.type === 'refresh' || m.type === 'openOllama') result.push({ type: 'model', model: publicModel(m.type === 'openOllama' ? ollamaModel : base), settings: options }, editPayload());
         else if (m.type === 'stageMetadata') {
           if (!checkpoint.capabilities(base).metadata) throw new Error('This checkpoint does not support metadata editing.');
@@ -55,15 +63,15 @@ async function main() {
         } else if (m.type === 'discardEdits') { edits.clear(); tensorPlan.clear(); result.push(editPayload()); }
         else if (m.type === 'saveCheckpoint') {
           const output = path.join(__dirname, '..', 'output', 'preview', `saved-${crypto.randomUUID()}.safetensors`);
-          const saved = await checkpoint.saveCheckpoint(base, output, { ...options, metadata: [...edits.values()], tensors: [...tensorPlan.values()] }); result.push({ type: 'checkpointSaved', path: saved.path });
+          const saved = await checkpoint.saveCheckpoint(base, output, { ...options, metadata: [...edits.values()], tensors: [...tensorPlan.values()] }); savedPath = saved.path; result.push({ type: 'checkpointSaved', path: saved.path });
         }
         else if (m.type === 'stats') result.push({ type: 'statistics', name: m.name, data: await backend.tensorStatistics(base, m.name, options) });
-        else if (m.type === 'compare' || m.type === 'compareOllama') result.push({ type: 'comparison', target: backend.publicModel(comparison), rows });
+        else if (m.type === 'compare' || m.type === 'compareOllama' || m.type === 'compareSaved') result.push({ type: 'comparison', target: backend.publicModel(comparison), rows, metadata: metadataDiff(base, comparison) });
         else if (m.type === 'analyzeDiff') {
           const candidates = m.name ? rows.filter(r => r.name === m.name) : rows.filter(r => r.status === 'unverified');
           for (const row of candidates) { row.metrics = await backend.compareTensor(base, comparison, row.name, options); row.status = row.metrics.status; result.push({ type: 'diffRow', row, completed: result.length + 1, total: candidates.length }); }
           result.push({ type: 'diffDone' });
-        } else if (m.type === 'export') result.push({ type: 'error', message: 'File dialogs and export are available in the VS Code extension. This browser preview uses generated local demo checkpoints.' });
+        } else if (m.type === 'export' || m.type === 'openSaved') result.push({ type: 'error', message: 'File dialogs, opening saved editors, and export are available in the VS Code extension. This browser preview uses generated local demo checkpoints.' });
         res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(result));
       } else { res.writeHead(404); res.end('Not found'); }
     } catch (e) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify([{ type: 'error', message: e.message }])); }
