@@ -5,9 +5,10 @@
   const state = { tab: saved.tab || 'weights', query: saved.query || '', dtype: '', page: 0, groupPage: 0, group: '', selected: saved.selected || '',
     stats: new Map(), rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffRole: '', diffPage: 0, diffDetailsOpen: false,
     sizeMetric: saved.sizeMetric === 'bytes' ? 'bytes' : 'elements', mapPage: 0, rolePage: 0, mapQuery: '', chartObservers: [],
+    mapView: saved.mapView === 'table' ? 'table' : 'fingerprint', mapScale: saved.mapScale === 'linear' ? 'linear' : 'log', mapCursor: null, mapObserver: null,
     busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
-  const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected, sizeMetric: state.sizeMetric });
+  const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected, sizeMetric: state.sizeMetric, mapView: state.mapView, mapScale: state.mapScale });
   const number = n => n == null ? '—' : new Intl.NumberFormat('en', { maximumSignificantDigits: 5 }).format(n);
   const integer = n => new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(n);
   const compact = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
@@ -43,7 +44,7 @@
   function heading(title, description, actions) { return add(el('div', 'section-heading'), add(el('div'), el('h2', '', title), description && el('p', 'subtle', description)), actions); }
   function showError(message) { for (const id of ['error', ...(state.drawerOpen ? ['drawer-error'] : [])]) { const n = document.getElementById(id); if (n) { n.className = 'notice error'; n.setAttribute('role', 'alert'); n.textContent = message; n.hidden = false; } } }
   function buildShell() {
-    state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = [];
+    state.chartObservers.forEach(o => o.disconnect()); state.chartObservers = []; state.mapObserver?.disconnect(); state.mapObserver = null;
     root.replaceChildren(); const shell = el('div', 'shell'), top = el('header', 'topbar'), brand = el('div', 'brand'), logo = el('span', 'logo');
     logo.setAttribute('aria-hidden', 'true'); add(brand, logo, el('span', '', 'WeightScope'));
     const tools = el('details', 'tools-menu'); add(tools, el('summary', '', 'Tools'), add(el('div', 'tools-popover'), action('Open Ollama model', 'openOllama'), action('Compare Ollama model', 'compareOllama'), action('Save checkpoint as…', 'saveCheckpoint'), action('Refresh model', 'refresh'), action('Export JSON report', 'export'), action('PyTorch setup', 'setup')));
@@ -69,7 +70,7 @@
     shell.append(drawer); root.append(shell); renderTab();
   }
   function renderTab() {
-    const content = document.getElementById('content'); if (!content) return; content.replaceChildren();
+    const content = document.getElementById('content'); if (!content) return; content.replaceChildren(); state.mapObserver?.disconnect(); state.mapObserver = null;
     document.querySelectorAll('[data-tab]').forEach(b => { b.classList.toggle('active', b.dataset.tab === state.tab); b.setAttribute('aria-pressed', String(b.dataset.tab === state.tab)); });
     if (state.tab === 'weights') renderWeights(content); else if (state.tab === 'compare') renderComparison(content); else if (state.tab === 'operators') renderOperators(content); else renderInfo(content);
   }
@@ -212,14 +213,48 @@
     renderChangeMap(map);
     if (focusedKey) [...map.querySelectorAll('[data-matrix-key]')].find(b => b.dataset.matrixKey === focusedKey)?.focus({ preventScroll: true });
   }
+  const codes = { unverified: '…', unavailable: '×', added: '+', removed: '−', 'shape-changed': 'S', 'basis-changed': 'U' };
+  const driftLabel = v => v > 0 && v * 100 < .01 ? `${chartNumber(v * 100)}%` : percent(v);
+  function lightTheme() { const c = getComputedStyle(document.body).backgroundColor.match(/[\d.]+/g)?.map(Number); return Boolean(c) && (c[3] ?? 1) > 0 && (.2126 * c[0] + .7152 * c[1] + .0722 * c[2]) / 255 > .5; }
+  function openMapRows(group, role = '') { state.diffGroup = group; state.diffRole = role; state.diffFilter = ''; state.diffQuery = ''; state.diffPage = 0; state.diffDetailsOpen = true; renderComparisonTab(); revealDiffResults(); }
+  // One drift map cell. A name collision keeps every tensor and is colored by its largest finite drift.
+  function mapCell(group, role, rows) {
+    const row = rows[0], m = rows.length === 1 ? row.metrics : null, finite = rows.map(r => r.metrics?.relativeL2).filter(Number.isFinite);
+    const relative = finite.length ? Math.max(...finite) : null, status = rows.length > 1 ? 'mixed' : row.status;
+    const main = rows.length > 1 ? `${rows.length} tensors` : m ? relative == null ? 'n/a' : percent(relative) : codes[status] || '—';
+    const note = rows.length > 1 ? 'Select to list' : m ? `${m.exact ? 'Full' : 'Sample'}${row.dtypeChanged ? ' · P' : ''}${m.nonFiniteMismatch ? ' · !' : ''}` : `${labels[status]}${row.dtypeChanged ? ' · P' : ''}`;
+    const description = rows.length > 1 ? `${group.key}, ${role}, ${rows.length} tensors${relative == null ? '' : `, largest relative L2 ${percent(relative)}`}` : `${row.name}: ${labels[row.status]}${row.dtypeChanged ? ', precision changed' : ''}${m ? `, ${relative == null ? 'relative L2 undefined for zero baseline norm or non-finite arithmetic' : `${percent(relative)} relative L2`}, ${m.exact ? 'full comparison' : 'sampled estimate'}, ${integer(m.sampled)} of ${integer(m.total)} values${m.nonFiniteMismatch ? `, ${integer(m.nonFiniteMismatch)} non-finite mismatches` : ''}` : ''}${row.error ? `. ${row.error}` : ''}`;
+    return { rows, status, relative, main, note, description, analyzed: rows.some(r => r.metrics), precision: rows.some(r => r.dtypeChanged), nonFinite: rows.some(r => r.metrics?.nonFiniteMismatch),
+      open: () => rows.length === 1 ? showDifference(row.name) : openMapRows(group.key, role) };
+  }
   function renderChangeMap(parent) {
-    const all = view.comparisonMatrix(state.rows), query = state.mapQuery.toLowerCase();
-    const matrix = query ? view.comparisonMatrix(state.rows.filter(r => view.matchesQuery(r, query))) : all;
+    state.mapObserver?.disconnect(); state.mapObserver = null;
+    const all = view.comparisonMatrix(state.rows), query = state.mapQuery.toLowerCase(), scale = view.driftScale(all, state.mapScale), light = lightTheme();
+    const matrix = query ? view.comparisonMatrix(state.rows.filter(r => view.matchesQuery(r, query))) : all, fingerprint = state.mapView === 'fingerprint';
+    const viewChoice = select([['fingerprint', 'Fingerprint'], ['table', 'Table']], state.mapView, v => { state.mapView = v; state.mapPage = 0; state.rolePage = 0; persist(); renderDiffOverview(); }, 'Drift map view');
+    const scaleChoice = select([['log', 'Log scale'], ['linear', 'Linear scale']], state.mapScale, v => { state.mapScale = v; persist(); renderDiffOverview(); }, 'Drift map scale');
+    viewChoice.dataset.matrixKey = 'map-view'; scaleChoice.dataset.matrixKey = 'map-scale';
+    parent.append(add(el('div', 'map-heading'), add(el('div'), el('h3', '', 'Layer drift map'), el('p', 'map-hint', `${integer(matrix.groups.length)} layer groups × ${integer(matrix.roles.length)} tensor roles · ${!scale.ticks.length ? 'No drift measured yet.' : `One ${scale.mode} relative L2 scale across all pages and filters.${state.mapScale === 'log' && scale.mode === 'linear' ? ' A log scale needs at least two different drift values.' : ''}`}`)), add(el('div', 'map-controls'), viewChoice, scaleChoice)));
+    if (!matrix.groups.length) { parent.append(el('p', 'empty', 'No tensors match the map search.')); return; }
+    const pages = fingerprint ? renderFingerprint(parent, matrix, scale, light) : renderHeatmapTable(parent, matrix, scale, light);
+    parent.append(driftLegend(matrix, scale, light, fingerprint));
+    parent.append(el('p', 'subtle', `Color shows the amount of drift, not a health score.${scale.mode === 'log' ? ' On the log scale, equal color steps are equal ratios of drift.' : ''} Relative L2 is undefined for a zero baseline norm. Full matches use the configured tolerance; sample matches do not prove whole-tensor equality.`));
+    pager(parent, matrix.groups.length, state.mapPage, p => { state.mapPage = p; renderDiffOverview(); }, pages.groups, 'groups');
+    pager(parent, matrix.roles.length, state.rolePage, p => { state.rolePage = p; renderDiffOverview(); }, pages.roles, 'roles');
+  }
+  function driftLegend(matrix, scale, light, fingerprint) {
+    const legend = el('div', 'heatmap-legend');
+    if (scale.ticks.length) { const ramp = el('i', 'drift-ramp'); ramp.style.background = `linear-gradient(to right, ${[0, .25, .5, .75, 1].map(t => view.heatColor(t, light)).join(', ')})`; add(legend, el('span', '', `Relative L2${scale.mode === 'log' ? ' (log)' : ''}`), el('span', '', driftLabel(scale.ticks[0])), ramp, el('span', '', driftLabel(scale.ticks[2]))); }
+    if (!fingerprint) { add(legend, el('span', '', '… Not analyzed'), el('span', '', '× Unavailable'), el('span', '', '+ Added'), el('span', '', '− Removed'), el('span', '', 'S Shape changed'), el('span', '', 'U Units differ'), el('span', '', 'P Precision changed'), el('span', '', '! Non-finite mismatch'), el('span', '', '— No tensor')); return legend; }
+    const swatch = (cls, text) => add(el('span'), el('i', `swatch ${cls}`), document.createTextNode(text));
+    add(legend, swatch('match', 'No drift'), swatch('undefined-drift', 'n/a'), swatch('unverified', 'Not analyzed'), swatch('unavailable', 'Unavailable'), swatch('added', 'Added'), swatch('removed', 'Removed'), swatch('structural', 'Shape or units changed'), swatch('precision', 'Precision changed'), swatch('non-finite', 'Non-finite mismatch'), swatch('no-tensor', 'No tensor'));
+    let full = 0, sampled = 0; for (const g of matrix.groups) for (const rows of g.cells.values()) for (const r of rows) if (r.metrics) r.metrics.exact ? full++ : sampled++;
+    return add(el('div'), legend, (full || sampled) && el('p', 'map-hint', `${integer(full)} full comparisons · ${integer(sampled)} sampled estimates. Hover or focus a cell for its coverage.`));
+  }
+  function renderHeatmapTable(parent, matrix, scale, light) {
     const rowSize = 24, columnSize = 10;
     state.mapPage = Math.min(state.mapPage, Math.max(0, Math.ceil(matrix.groups.length / rowSize) - 1));
     state.rolePage = Math.min(state.rolePage, Math.max(0, Math.ceil(matrix.roles.length / columnSize) - 1));
-    parent.append(el('h3', '', 'Layer drift map'), el('p', 'map-hint', `${integer(matrix.groups.length)} layer groups × ${integer(matrix.roles.length)} tensor roles · Shared relative L2 scale across all pages and filters.`));
-    if (!matrix.groups.length) { parent.append(el('p', 'empty', 'No tensors match the map search.')); return; }
     const roles = matrix.roles.slice(state.rolePage * columnSize, (state.rolePage + 1) * columnSize);
     const wrap = el('div', 'table-wrap heatmap-wrap'), t = el('table', 'heatmap'), head = el('tr'), body = el('tbody');
     t.style.setProperty('--roles', roles.length);
@@ -227,35 +262,99 @@
     const corner = el('th', '', 'Layer group / tensor role'); corner.scope = 'col'; head.append(corner);
     for (const role of roles) { const th = el('th'); th.append(brokenName(role.replace(/\.weight$/, ''), 'role-name')); th.scope = 'col'; th.title = role; th.setAttribute('aria-label', role); head.append(th); }
     add(t, add(el('thead'), head), body); wrap.append(t); parent.append(wrap);
-    const openRows = (group, role = '') => { state.diffGroup = group; state.diffRole = role; state.diffFilter = ''; state.diffQuery = ''; state.diffPage = 0; state.diffDetailsOpen = true; renderComparisonTab(); revealDiffResults(); };
-    const codes = { unverified: '…', unavailable: '×', added: '+', removed: '−', 'shape-changed': 'S', 'basis-changed': 'U' };
     for (const group of matrix.groups.slice(state.mapPage * rowSize, (state.mapPage + 1) * rowSize)) {
-      const tr = el('tr'), label = el('th'); label.scope = 'row'; label.append(button(group.key, () => openRows(group.key), 'tensor-link')); tr.append(label);
+      const tr = el('tr'), label = el('th'); label.scope = 'row'; label.append(button(group.key, () => openMapRows(group.key), 'tensor-link')); tr.append(label);
       for (const role of roles) {
         const td = el('td'), rows = group.cells.get(role);
         if (!rows) td.append(el('span', 'missing-cell', '—'));
         else {
-          const row = rows[0], m = rows.length === 1 ? row.metrics : null, relative = m && Number.isFinite(m.relativeL2) ? m.relativeL2 : null;
-          const status = rows.length > 1 ? 'mixed' : row.status;
-          const cell = button('', () => rows.length === 1 ? showDifference(row.name) : openRows(group.key, role), `heatmap-cell ${status}`);
+          const c = mapCell(group, role, rows), cell = button('', c.open, `heatmap-cell ${c.status}`);
           cell.dataset.matrixKey = rows.map(r => r.name).join('\n');
-          const main = rows.length > 1 ? `${rows.length} tensors` : m ? relative == null ? 'n/a' : percent(relative) : codes[status] || '—';
-          const note = rows.length > 1 ? 'Select to list' : m ? `${m.exact ? 'Full' : 'Sample'}${row.dtypeChanged ? ' · P' : ''}${m.nonFiniteMismatch ? ' · !' : ''}` : `${labels[status]}${row.dtypeChanged ? ' · P' : ''}`;
-          add(cell, el('span', 'heatmap-value', main), el('span', 'heatmap-note', note));
-          if (relative != null) cell.style.setProperty('--heat', all.maxRelativeL2 ? String(relative / all.maxRelativeL2 * .65) : '0');
-          const description = rows.length > 1 ? `${group.key}, ${role}, ${rows.length} tensors` : `${row.name}: ${labels[row.status]}${row.dtypeChanged ? ', precision changed' : ''}${m ? `, ${relative == null ? 'relative L2 undefined for zero baseline norm or non-finite arithmetic' : `${percent(relative)} relative L2`}, ${m.exact ? 'full comparison' : 'sampled estimate'}, ${integer(m.sampled)} of ${integer(m.total)} values${m.nonFiniteMismatch ? `, ${integer(m.nonFiniteMismatch)} non-finite mismatches` : ''}` : ''}${row.error ? `. ${row.error}` : ''}`;
-          cell.title = description; cell.setAttribute('aria-label', description); td.append(cell);
+          add(cell, el('span', 'heatmap-value', c.main), el('span', 'heatmap-note', c.note));
+          if (c.relative > 0) { const position = scale.position(c.relative); cell.style.setProperty('--heat-color', view.heatColor(position, light)); cell.classList.add('heated', `ink-${view.heatInk(position, light)}`); }
+          cell.title = c.description; cell.setAttribute('aria-label', c.description); td.append(cell);
         }
         tr.append(td);
       }
       body.append(tr);
     }
-    const legend = el('div', 'heatmap-legend');
-    if (all.maxRelativeL2) add(legend, el('span', '', 'Relative L2'), el('span', '', '0%'), el('i', 'heatmap-ramp'), el('span', '', percent(all.maxRelativeL2)));
-    add(legend, el('span', '', '… Not analyzed'), el('span', '', '× Unavailable'), el('span', '', '+ Added'), el('span', '', '− Removed'), el('span', '', 'S Shape changed'), el('span', '', 'U Units differ'), el('span', '', 'P Precision changed'), el('span', '', '! Non-finite mismatch'), el('span', '', '— No tensor')); parent.append(legend);
-    parent.append(el('p', 'subtle', 'Intensity shows the amount of drift, not a health score. Relative L2 is undefined for a zero baseline norm. Full matches use the configured tolerance; sample matches do not prove whole-tensor equality.'));
-    pager(parent, matrix.groups.length, state.mapPage, p => { state.mapPage = p; renderDiffOverview(); }, rowSize, 'groups');
-    pager(parent, matrix.roles.length, state.rolePage, p => { state.rolePage = p; renderDiffOverview(); }, columnSize, 'roles');
+    return { groups: rowSize, roles: columnSize };
+  }
+  // Layer groups run left to right and tensor roles top to bottom, so a whole model's drift reads as one image.
+  function renderFingerprint(parent, matrix, scale, light) {
+    const columnSize = 160, rowSize = 48;
+    state.mapPage = Math.min(state.mapPage, Math.max(0, Math.ceil(matrix.groups.length / columnSize) - 1));
+    state.rolePage = Math.min(state.rolePage, Math.max(0, Math.ceil(matrix.roles.length / rowSize) - 1));
+    const groups = matrix.groups.slice(state.mapPage * columnSize, (state.mapPage + 1) * columnSize), roles = matrix.roles.slice(state.rolePage * rowSize, (state.rolePage + 1) * rowSize);
+    const cells = groups.map(g => roles.map(r => g.cells.has(r) ? mapCell(g, r, g.cells.get(r)) : null));
+    const wrap = el('div', 'fingerprint'), canvas = el('canvas'), focus = el('div', 'fingerprint-focus'), tip = el('div', 'fingerprint-tip'), live = el('div', 'visually-hidden');
+    wrap.tabIndex = 0; wrap.dataset.matrixKey = 'fingerprint'; wrap.setAttribute('role', 'group'); wrap.setAttribute('aria-roledescription', 'drift fingerprint');
+    wrap.setAttribute('aria-label', `Drift fingerprint: ${integer(groups.length)} layer groups as columns, ${integer(roles.length)} tensor roles as rows. Arrow keys move between cells; Enter opens the selected cell.`);
+    canvas.setAttribute('aria-hidden', 'true'); live.setAttribute('aria-live', 'polite'); focus.hidden = true; tip.hidden = true;
+    add(wrap, canvas, focus, tip, live); parent.append(wrap);
+    let layout = null, cursor = (() => { const c = groups.findIndex(g => g.key === state.mapCursor?.group), r = roles.indexOf(state.mapCursor?.role); return c >= 0 && r >= 0 ? { c, r } : null; })();
+    const at = (x, y) => { if (!layout) return null; const c = Math.floor((x - layout.left) / layout.cell), r = Math.floor((y - layout.top) / layout.row); return x >= layout.left && y >= layout.top && c < groups.length && r < roles.length ? { c, r } : null; };
+    function mark(p) {
+      if (!p || !layout) { focus.hidden = true; tip.hidden = true; return; }
+      const cell = cells[p.c][p.r], x = layout.left + p.c * layout.cell, y = layout.top + p.r * layout.row;
+      Object.assign(focus.style, { left: `${x - 2}px`, top: `${y - 2}px`, width: `${layout.cell + 3}px`, height: `${layout.row + 3}px` }); focus.hidden = false;
+      tip.replaceChildren(el('strong', '', `${groups[p.c].key} · ${roles[p.r]}`), el('span', '', cell ? `${cell.main} · ${cell.note}` : 'No tensor in this group and role')); tip.hidden = false;
+      const right = x + layout.cell + 10, left = right + tip.offsetWidth > wrap.clientWidth ? Math.max(0, x - tip.offsetWidth - 10) : right;
+      Object.assign(tip.style, { left: `${left}px`, top: `${Math.max(0, Math.min(y - 6, wrap.clientHeight - tip.offsetHeight))}px` });
+    }
+    function move(p) { cursor = p; state.mapCursor = { group: groups[p.c].key, role: roles[p.r] }; mark(p); live.textContent = cells[p.c][p.r]?.description || `${groups[p.c].key}, ${roles[p.r]}: no tensor`; }
+    function draw() {
+      const style = getComputedStyle(wrap), css = name => style.getPropertyValue(name).trim(), mono = css('--vscode-editor-font-family') || 'monospace', ratio = window.devicePixelRatio || 1;
+      const width = Math.max(240, wrap.clientWidth), gutter = Math.round(Math.min(200, Math.max(96, width * .2))), top = 2;
+      const cell = Math.max(3, Math.min(56, Math.floor((width - gutter - 4) / groups.length))), row = Math.max(14, Math.min(28, Math.round(cell * .7))), gap = cell >= 6 ? 1 : 0;
+      const g = canvas.getContext('2d'); g.font = `11px ${mono}`;
+      const fit = (text, max) => { if (g.measureText(text).width <= max) return text; let s = text; while (s.length > 1 && g.measureText(`…${s}`).width > max) s = s.slice(1); return `…${s}`; };
+      const short = groups.map(group => { const parts = group.key.split('.'); return parts.findLast(p => /^\d+$/.test(p)) ?? parts.at(-1); });
+      const rotated = cell >= 13, axis = rotated ? Math.min(96, 14 + Math.max(...short.map(s => g.measureText(s).width))) : 24, height = top + roles.length * row + axis;
+      canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); canvas.style.height = `${height}px`;
+      g.setTransform(ratio, 0, 0, ratio, 0, 0); g.clearRect(0, 0, width, height); g.font = `11px ${mono}`; g.textBaseline = 'middle';
+      const muted = css('--muted'), colors = { added: css('--mint'), removed: css('--red'), unavailable: css('--red') }, hatch = document.createElement('canvas');
+      hatch.width = hatch.height = 6; const h = hatch.getContext('2d'); h.strokeStyle = muted; h.globalAlpha = .55; h.beginPath(); h.moveTo(0, 6); h.lineTo(6, 0); h.stroke();
+      const pattern = g.createPattern(hatch, 'repeat');
+      g.fillStyle = muted; g.textAlign = 'right';
+      roles.forEach((role, r) => g.fillText(fit(role.replace(/\.weight$/, ''), gutter - 14), gutter - 8, top + r * row + row / 2));
+      cells.forEach((column, c) => column.forEach((item, r) => {
+        if (!item) return;
+        const x = gutter + c * cell, y = top + r * row, w = cell - gap, hgt = row - gap;
+        if (item.relative != null) { g.globalAlpha = item.relative > 0 ? 1 : .22; g.fillStyle = item.relative > 0 ? view.heatColor(scale.position(item.relative), light) : muted; g.fillRect(x, y, w, hgt); }
+        else if (item.analyzed) { g.globalAlpha = .5; g.fillStyle = muted; g.fillRect(x, y, w, hgt); }
+        else if (['unverified', 'mixed'].includes(item.status)) { g.fillStyle = pattern; g.fillRect(x, y, w, hgt); }
+        else {
+          const color = colors[item.status] || css('--accent');
+          g.globalAlpha = .25; g.fillStyle = color; g.fillRect(x, y, w, hgt); g.globalAlpha = 1; g.strokeStyle = color; g.lineWidth = 1; g.strokeRect(x + .5, y + .5, w - 1, hgt - 1);
+          if (item.status === 'unavailable' && w >= 7) { g.beginPath(); g.moveTo(x + 2, y + 2); g.lineTo(x + w - 2, y + hgt - 2); g.moveTo(x + w - 2, y + 2); g.lineTo(x + 2, y + hgt - 2); g.stroke(); }
+        }
+        g.globalAlpha = 1; const corner = Math.min(6, w / 2, hgt / 2);
+        if (item.precision && w >= 7) { g.fillStyle = css('--accent'); g.beginPath(); g.moveTo(x + w - corner, y); g.lineTo(x + w, y); g.lineTo(x + w, y + corner); g.fill(); }
+        if (item.nonFinite && w >= 7) { g.fillStyle = css('--red'); g.beginPath(); g.moveTo(x, y + hgt - corner); g.lineTo(x, y + hgt); g.lineTo(x + corner, y + hgt); g.fill(); }
+      }));
+      g.fillStyle = muted; const base = top + roles.length * row + 6;
+      if (rotated) short.forEach((label, c) => { g.save(); g.translate(gutter + c * cell + cell / 2, base); g.rotate(-Math.PI / 2); g.textAlign = 'right'; g.fillText(fit(label, axis - 10), 0, 0); g.restore(); });
+      else {
+        const step = [1, 2, 4, 5, 8, 10, 16, 20, 25, 32, 50, 64, 100, 128, 200, 256].find(s => s * cell >= 28) || 512; g.textAlign = 'center';
+        short.forEach((label, c) => { if (/^\d+$/.test(label) && Number(label) % step === 0) g.fillText(label, gutter + c * cell + cell / 2, base + 6); });
+      }
+      layout = { left: gutter, top, cell, row };
+      if (cursor && document.activeElement === wrap) mark(cursor);
+    }
+    wrap.addEventListener('keydown', e => {
+      const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[e.key];
+      if (step) { e.preventDefault(); move(cursor ? { c: Math.max(0, Math.min(groups.length - 1, cursor.c + step[0])), r: Math.max(0, Math.min(roles.length - 1, cursor.r + step[1])) } : { c: 0, r: 0 }); }
+      else if ((e.key === 'Enter' || e.key === ' ') && cursor && cells[cursor.c][cursor.r]) { e.preventDefault(); cells[cursor.c][cursor.r].open(); }
+      else if (e.key === 'Escape') tip.hidden = true;
+    });
+    wrap.addEventListener('focus', () => { if (cursor) mark(cursor); else { const c = cells.findIndex(column => column.some(Boolean)); move({ c: Math.max(0, c), r: Math.max(0, c < 0 ? 0 : cells[c].findIndex(Boolean)) }); } });
+    wrap.addEventListener('blur', () => mark(null));
+    canvas.addEventListener('pointermove', e => { const p = at(e.offsetX, e.offsetY); canvas.style.cursor = p && cells[p.c][p.r] ? 'pointer' : 'default'; mark(p || (document.activeElement === wrap ? cursor : null)); });
+    canvas.addEventListener('pointerleave', () => mark(document.activeElement === wrap ? cursor : null));
+    canvas.addEventListener('click', e => { const p = at(e.offsetX, e.offsetY); if (p && cells[p.c][p.r]) { move(p); cells[p.c][p.r].open(); } });
+    state.mapObserver = new ResizeObserver(draw); state.mapObserver.observe(wrap); draw();
+    return { groups: columnSize, roles: rowSize };
   }
   function renderDiffResults() {
     const parent = document.getElementById('diff-results'); if (!parent) return; parent.replaceChildren(); if (state.diffGroup) parent.append(add(el('div', 'breadcrumb'), button('All groups', () => { state.diffGroup = ''; state.diffRole = ''; state.diffPage = 0; renderDiffResults(); renderDiffOverview(); }, 'text-button'), el('span', '', '/'), brokenName(`${state.diffGroup}${state.diffRole ? ` / ${state.diffRole}` : ''}`, 'crumb-current')));
@@ -304,5 +403,7 @@
     else if (m.type === 'error') showError(m.message);
     else if (m.type === 'checkpointSaved') { state.savedPath = m.path; const n = document.getElementById('error'); if (n) { n.className = 'notice'; n.setAttribute('role', 'status'); n.textContent = `Checkpoint copy saved: ${m.path}`; n.hidden = false; } }
   });
+  // VS Code swaps the body theme class without reloading; the drift map's colors depend on it.
+  new MutationObserver(() => { if (state.tab === 'compare' && state.target) renderDiffOverview(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   buildShell(); send('ready');
 })();

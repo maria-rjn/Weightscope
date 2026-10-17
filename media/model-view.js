@@ -47,18 +47,37 @@
   }
   function comparisonMatrix(rows) {
     const map = new Map(), roles = new Set();
-    let maxRelativeL2 = 0;
+    let maxRelativeL2 = 0, minRelativeL2 = Infinity;
     for (const row of rows) {
       const key = groupKey(row.name), role = tensorRole(row.name);
       if (!map.has(key)) map.set(key, { key, cells: new Map() });
       const cells = map.get(key).cells;
       if (!cells.has(role)) cells.set(role, []);
       cells.get(role).push(row); roles.add(role);
-      if (Number.isFinite(row.metrics?.relativeL2)) maxRelativeL2 = Math.max(maxRelativeL2, row.metrics.relativeL2);
+      const relative = row.metrics?.relativeL2;
+      if (Number.isFinite(relative)) { maxRelativeL2 = Math.max(maxRelativeL2, relative); if (relative > 0) minRelativeL2 = Math.min(minRelativeL2, relative); }
     }
     const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
-    return { groups: [...map.values()].sort((a, b) => natural(a.key, b.key)), roles: [...roles].sort(natural), maxRelativeL2 };
+    return { groups: [...map.values()].sort((a, b) => natural(a.key, b.key)), roles: [...roles].sort(natural), maxRelativeL2, minRelativeL2: minRelativeL2 === Infinity ? 0 : minRelativeL2 };
   }
+  // Position of a relative L2 value on the shared map scale, from 0 to 1, or null when it has none.
+  // The log scale spans the smallest to the largest positive drift (at most six decades), so small
+  // changes stay visible next to one large outlier. Zero drift is position 0 on both scales.
+  function driftScale(matrix, mode = 'log') {
+    const max = matrix.maxRelativeL2, low = Math.max(matrix.minRelativeL2, max * 1e-6), log = mode === 'log' && max > 0 && low > 0 && low < max;
+    const position = v => !Number.isFinite(v) || !(max > 0) ? null : v <= 0 ? 0 : Math.min(1, log ? Math.max(0, Math.log(v / low) / Math.log(max / low)) : v / max);
+    return { mode: log ? 'log' : 'linear', position, ticks: !(max > 0) ? [] : log ? [low, Math.sqrt(low * max), max] : [0, max / 2, max] };
+  }
+  // Magma, perceptually uniform. Light themes run it from pale to dark so more drift always means more contrast with the page.
+  const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const RAMPS = { dark: ['#3b0f70', '#641a80', '#8c2981', '#b73779', '#de4968', '#f7705c', '#fe9f6d', '#fecf92', '#fcfdbf'].map(hex),
+    light: ['#fecf92', '#fe9f6d', '#f7705c', '#de4968', '#b73779', '#8c2981', '#641a80', '#3b0f70', '#140e36'].map(hex) };
+  function heatRgb(t, light = false) {
+    const ramp = RAMPS[light ? 'light' : 'dark'], p = Math.max(0, Math.min(1, t)) * (ramp.length - 1), i = Math.min(ramp.length - 2, Math.floor(p)), f = p - i;
+    return ramp[i].map((c, k) => Math.round(c + (ramp[i + 1][k] - c) * f));
+  }
+  const heatColor = (t, light) => `rgb(${heatRgb(t, light).join(', ')})`;
+  const heatInk = (t, light) => { const [r, g, b] = heatRgb(t, light); return .2126 * r + .7152 * g + .0722 * b > 140 ? 'dark' : 'light'; };
   // Translated cross-format rows also answer to the tensor name in the other checkpoint.
   const matchesQuery = (row, query) => [row.name, row.baseName, row.targetName].some(n => n && n.toLowerCase().includes(query.toLowerCase()));
   function diffRows(rows, { query = '', status = 'attention', group = '', role = '' } = {}) {
@@ -67,5 +86,5 @@
       && (!status || (status === 'attention' ? needsAttention(r) : r.status === status)))
       .sort((a, b) => Number(hasChange(b)) - Number(hasChange(a)) || (b.metrics?.maxAbs || 0) - (a.metrics?.maxAbs || 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   }
-  return { groupKey, groups, tensorRole, comparisonMatrix, hasChange, needsAttention, diffOverview, diffRows, matchesQuery };
+  return { groupKey, groups, tensorRole, comparisonMatrix, driftScale, heatColor, heatInk, hasChange, needsAttention, diffOverview, diffRows, matchesQuery };
 });
