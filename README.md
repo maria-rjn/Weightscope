@@ -11,7 +11,7 @@ Open `.safetensors` (single-file or sharded), `.gguf`, `.onnx`, `.pt`, or `.pth`
 ## Install
 
 1. Clone this repository and run `npm ci`, then `npm run package` (Node.js 22 or newer is required for the packaging tools).
-2. In VS Code, run **Extensions: Install from VSIX…** and select the generated `artifacts/weightscope-0.3.1.vsix`.
+2. In VS Code, run **Extensions: Install from VSIX…** and select the generated `artifacts/weightscope-0.4.0.vsix`.
 3. Open a supported model file, or run **WeightScope: Inspect Model**.
 
 If another extension owns these file types, use **Reopen Editor With… → WeightScope**. Requires VS Code 1.90 or newer. Works locally and with Remote SSH when the extension and model are on the remote host.

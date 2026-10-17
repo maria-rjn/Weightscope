@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Compare GGUF files with the Hugging Face safetensors or PyTorch checkpoint they were converted from. Tensor names are translated to llama.cpp's GGUF names for supported architectures, Q/K rows permuted into llama.cpp's rotary layout are restored using the GGUF head counts, Gemma's `1 + w` norm offset is removed, and stacked GGUF experts are compared per expert. The drawer shows both tensor names and each reversed step; unsupported architectures keep exact-name matching with an explanation.
 - Open sharded Hugging Face safetensors checkpoints as one model from the `.safetensors.index.json` index or any `-0000X-of-0000N` shard, including Hugging Face cache snapshots. Totals, layer groups, statistics, and drift comparisons cover every shard.
