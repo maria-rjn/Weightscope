@@ -9,7 +9,8 @@ const { makeDemo } = require('./make-demo');
 const { store } = require('../test/ollama-fixtures');
 async function main() {
   const demo = await makeDemo();
-  const model = await backend.inspect(demo.base), target = await backend.inspect(demo.target), shardedModel = await backend.inspect(demo.sharded);
+  // WEIGHTSCOPE_PREVIEW_BASE/TARGET preview other checkpoints, e.g. a Hugging Face file against its GGUF conversion.
+  const model = await backend.inspect(process.env.WEIGHTSCOPE_PREVIEW_BASE || demo.base), target = await backend.inspect(process.env.WEIGHTSCOPE_PREVIEW_TARGET || demo.target), shardedModel = await backend.inspect(demo.sharded);
   const catalog = await store(path.join(__dirname, '..', 'output', 'preview', 'models'));
   const template = await catalog.blob('template', '{{ .System }}\nUser: {{ .Prompt }}\nAssistant:');
   const params = await catalog.blob('params', { temperature: 0.7, num_ctx: 8192 });
@@ -38,7 +39,7 @@ async function main() {
         const m = JSON.parse(body), result = [], base = m.previewOllama ? ollamaModel : m.previewSharded ? shardedModel : model, comparison = m.previewOllama ? ollamaTarget : target;
         if (m.type === 'ready' || m.type === 'refresh' || m.type === 'openOllama') result.push({ type: 'model', model: backend.publicModel(m.type === 'openOllama' ? ollamaModel : base), settings: options });
         else if (m.type === 'stats') result.push({ type: 'statistics', name: m.name, data: await backend.tensorStatistics(base, m.name, options) });
-        else if (m.type === 'compare' || m.type === 'compareOllama') result.push({ type: 'comparison', target: backend.publicModel(comparison), rows });
+        else if (m.type === 'compare' || m.type === 'compareOllama') result.push({ type: 'comparison', target: backend.publicModel(comparison), rows, matching: backend.tensorMatching(base, comparison) });
         else if (m.type === 'analyzeDiff') {
           const candidates = m.name ? rows.filter(r => r.name === m.name) : rows.filter(r => r.status === 'unverified');
           for (const row of candidates) { row.metrics = await backend.compareTensor(base, comparison, row.name, options); row.status = row.metrics.status; result.push({ type: 'diffRow', row, completed: result.length + 1, total: candidates.length }); }
