@@ -70,7 +70,7 @@ test('drift matrix aligns actual tensor suffixes, preserves collisions and keeps
     { name: 'encoder.weight', status: 'removed', metrics: { relativeL2: NaN } }
   ];
   const matrix = view.comparisonMatrix(rows);
-  assert.equal(matrix.maxRelativeL2, .4);
+  assert.equal(matrix.maxRelativeL2, .4); assert.equal(matrix.minRelativeL2, .4);
   assert.ok(matrix.groups.findIndex(g => g.key === 'model.layers.2') < matrix.groups.findIndex(g => g.key === 'model.layers.10'));
   assert.deepEqual(matrix.roles, ['bias', 'norm.weight', 'self_attn.q_proj.weight', 'weight']);
   const layer = matrix.groups.find(g => g.key === 'model.layers.2');
@@ -86,5 +86,32 @@ test('drift matrix retains every group and role beyond either visible page', () 
   assert.equal(matrix.groups.length, 135); assert.equal(matrix.roles.length, 12);
   assert.equal(matrix.groups.at(-1).key, 'block.134'); assert.equal(matrix.roles.at(-1), 'module.11.weight');
   assert.equal(matrix.groups.reduce((n, group) => n + [...group.cells.values()].reduce((m, cell) => m + cell.length, 0), 0), rows.length);
-  assert.deepEqual(view.comparisonMatrix([]), { groups: [], roles: [], maxRelativeL2: 0 });
+  assert.deepEqual(view.comparisonMatrix([]), { groups: [], roles: [], maxRelativeL2: 0, minRelativeL2: 0 });
+});
+
+test('drift scale keeps small changes visible on a log scale and stays honest about zero and undefined drift', () => {
+  const matrix = view.comparisonMatrix([
+    { name: 'block.0.weight', status: 'changed', metrics: { relativeL2: .001 } },
+    { name: 'block.1.weight', status: 'changed', metrics: { relativeL2: .1 } },
+    { name: 'block.2.weight', status: 'equal', metrics: { relativeL2: 0 } },
+    { name: 'block.3.weight', status: 'equal', metrics: { relativeL2: null } }
+  ]);
+  assert.equal(matrix.minRelativeL2, .001); assert.equal(matrix.maxRelativeL2, .1);
+  const log = view.driftScale(matrix, 'log'), linear = view.driftScale(matrix, 'linear');
+  assert.equal(log.mode, 'log'); assert.equal(log.position(.001), 0); assert.ok(Math.abs(log.position(.01) - .5) < 1e-12); assert.equal(log.position(.1), 1);
+  assert.equal(log.position(0), 0); assert.equal(log.position(null), null); assert.equal(log.position(NaN), null);
+  assert.deepEqual(log.ticks.map(t => Number(t.toPrecision(6))), [.001, .01, .1]);
+  assert.equal(linear.mode, 'linear'); assert.equal(linear.position(.05), .5); assert.deepEqual(linear.ticks, [0, .05, .1]);
+  // One decade-spanning outlier cannot push the rest of the map off a six-decade log scale.
+  const wide = view.driftScale({ maxRelativeL2: 1, minRelativeL2: 1e-12 }, 'log');
+  assert.equal(wide.position(1e-9), 0); assert.equal(wide.ticks[0], 1e-6);
+  assert.equal(view.driftScale({ maxRelativeL2: .2, minRelativeL2: .2 }, 'log').mode, 'linear');
+  assert.deepEqual(view.driftScale({ maxRelativeL2: 0, minRelativeL2: 0 }).ticks, []);
+  assert.equal(view.driftScale({ maxRelativeL2: 0, minRelativeL2: 0 }).position(0), null);
+});
+
+test('drift colors use one perceptual ramp, reversed for light themes, with readable ink', () => {
+  assert.equal(view.heatColor(0), 'rgb(59, 15, 112)'); assert.equal(view.heatColor(1), 'rgb(252, 253, 191)');
+  assert.equal(view.heatColor(1, true), 'rgb(20, 14, 54)'); assert.equal(view.heatColor(2), view.heatColor(1)); assert.equal(view.heatColor(-1), view.heatColor(0));
+  assert.equal(view.heatInk(0), 'light'); assert.equal(view.heatInk(1), 'dark'); assert.equal(view.heatInk(0, true), 'dark'); assert.equal(view.heatInk(1, true), 'light');
 });

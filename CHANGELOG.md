@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add a **Fingerprint** view to the layer drift map. It draws every layer group (columns) and tensor role (rows) as one dense canvas image, with hover details, arrow-key navigation, and a screen-reader description for each cell. The **Table** view keeps written values.
+- Add a **Log scale** for relative L2 drift, on by default, spanning up to six decades so small changes stay visible next to a large outlier. **Linear scale** remains available, and both stay shared across pages and filters.
+- Color drift with a perceptually uniform ramp (reversed in light themes) in both views, and give exact zero drift its own neutral color.
+
 ## 0.4.2
 
 - Add a WeightScope Activity Bar icon with a **Start** view. It has buttons to inspect a model file, open an Ollama model, compare checkpoints or Ollama models, and set up PyTorch, so you can start without opening a model first.
