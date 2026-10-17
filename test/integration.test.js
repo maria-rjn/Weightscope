@@ -7,6 +7,7 @@ const path = require('node:path');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
 const backend = require('../src/backend');
+const { saveCheckpoint } = require('../src/checkpoint');
 const { sampleWindows } = require('../src/binary');
 const pythonPath = process.env.WEIGHTSCOPE_TEST_PYTHON;
 let dir;
@@ -17,6 +18,31 @@ before(async () => {
 });
 after(async () => { if (dir) await fs.rm(dir, { recursive: true, force: true }); });
 const options = { pythonPath, trusted: true, sampleSize: 32768 };
+
+test('upstream libraries can reopen metadata-edited checkpoints and validated PyTorch copies', { skip: !pythonPath }, async () => {
+  for (const ext of ['safetensors', 'gguf', 'onnx']) {
+    const model = await backend.inspect(path.join(dir, `official.${ext}`));
+    await saveCheckpoint(model, path.join(dir, `edited.${ext}`), { metadata: [{ key: 'weightscope.test', value: 'round-trip' }] });
+  }
+  const torch = await backend.inspect(path.join(dir, 'official.pt'), options);
+  await saveCheckpoint(torch, path.join(dir, 'copy.pt'), options);
+  await execFile(pythonPath, ['-c', `
+import os, sys, torch, onnx, gguf
+from safetensors import safe_open
+root = sys.argv[1]
+with safe_open(os.path.join(root, 'edited.safetensors'), framework='pt') as f:
+    assert f.metadata()['weightscope.test'] == 'round-trip'
+model = onnx.load(os.path.join(root, 'edited.onnx'))
+onnx.checker.check_model(model)
+assert dict((p.key, p.value) for p in model.metadata_props)['weightscope.test'] == 'round-trip'
+reader = gguf.GGUFReader(os.path.join(root, 'edited.gguf'))
+assert 'weightscope.test' in reader.fields
+assert len(reader.tensors) > 0
+original = torch.load(os.path.join(root, 'official.pt'), weights_only=True)
+copy = torch.load(os.path.join(root, 'copy.pt'), weights_only=True)
+assert original['epoch'] == copy['epoch']
+`, dir], { timeout: 120000 });
+});
 
 test('upstream safetensors and ONNX serialization agrees with native readers', { skip: !pythonPath }, async () => {
   const safe = await backend.inspect(path.join(dir, 'official.safetensors'));

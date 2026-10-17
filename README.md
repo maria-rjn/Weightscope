@@ -56,6 +56,12 @@ Layer groups follow the first numbered module in tensor names, or the enclosing 
 
 Single-file safetensors, GGUF (including downloaded Ollama GGUF blobs), ONNX, and supported PyTorch checkpoints retain their format. PyTorch validation requires the same trusted workspace and interpreter as inspection. ONNX files with external weights must stay in the original directory to preserve relative references; external weights are shared, not copied. Multi-blob Ollama safetensors export is not supported.
 
+## Edit metadata
+
+Open **Model details → Edit metadata**, enter a key and value, and stage an update or removal. Review pending changes, then **Save checkpoint as…** to write a new checkpoint. **Discard pending edits** removes the plan. Statistics continue to describe the original file; edits are kept only while the inspector is open. Refresh requires discarding the pending plan first.
+
+Safetensors and ONNX metadata properties use strings. ONNX producer, graph, and opset fields are not metadata properties. GGUF preserves existing scalar types and supports new scalar keys with a selected type. Enter booleans as `true`/`false`, numbers as JSON numbers, and 64-bit integers as exact decimal text. Untouched GGUF arrays are copied in full, including tokenizer entries beyond the preview; arrays cannot be rewritten from a truncated preview. `general.alignment` is fixed to preserve the storage layout. PyTorch metadata editing and multi-blob Ollama editing are not supported.
+
 ## Format support
 
 | Format | Metadata / tree | Numerical analysis | Runtime |

@@ -4,7 +4,7 @@
   const vscode = acquireVsCodeApi(), view = WeightScopeView, root = document.getElementById('app'), saved = vscode.getState() || {}, PAGE = 40;
   const state = { tab: saved.tab || 'weights', query: saved.query || '', dtype: '', page: 0, groupPage: 0, group: '', selected: saved.selected || '',
     stats: new Map(), rows: [], diffQuery: '', diffFilter: 'attention', diffGroup: '', diffPage: 0, diffDetailsOpen: false,
-    busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
+    metadataEdits: [], busy: false, showTree: false, moreColumns: false, drawerOpen: false, drawerMode: 'tensor' };
   const send = (type, data = {}) => vscode.postMessage({ type, ...data });
   const persist = () => vscode.setState({ tab: state.tab, query: state.query, selected: state.selected });
   const number = n => n == null ? '—' : new Intl.NumberFormat('en', { maximumSignificantDigits: 5 }).format(n);
@@ -44,6 +44,7 @@
     if (!state.model) { add(shell, add(el('main', 'loading'), el('h1', '', 'Open a checkpoint. See what’s inside.'), el('p', 'subtle', 'Reading model metadata…'), action('Retry', 'refresh'), action('Open Ollama model', 'openOllama'), action('PyTorch setup', 'setup')), error, busy); root.append(shell); return; }
     const m = state.model, s = m.summary, hero = el('section', 'hero');
     add(hero, add(el('div', 'file-line'), el('h1', '', m.name), el('span', 'badge', m.format.toUpperCase()), m.source?.kind === 'ollama' && el('span', 'badge', 'Ollama')), add(el('div', 'model-facts'), el('span', '', `${compact(s.parameters)} stored values`), el('span', '', `${integer(s.tensorCount)} tensors`), el('span', '', `${bytes(s.fileBytes)} ${m.source ? 'weights' : 'file'}`))); shell.append(hero);
+    const pending = el('section', 'pending-edits'); pending.id = 'pending-edits'; pending.setAttribute('aria-live', 'polite'); shell.append(pending);
     if (m.warnings.length) shell.append(disclosure(`${m.warnings.length} format ${m.warnings.length === 1 ? 'note' : 'notes'}`, el('p', 'subtle', m.warnings.join(' ')))); add(shell, error, busy);
     const tabs = el('nav', 'tabs'); tabs.setAttribute('aria-label', 'Inspector sections');
     const choices = [['weights', 'Explore'], ['compare', 'Compare'], ['info', 'Model details']]; if (m.format === 'onnx') choices.push(['operators', 'Operators']);
@@ -51,7 +52,36 @@
     const content = el('main'); content.id = 'content'; add(shell, tabs, content, add(el('footer', 'footer'), el('span', '', 'Original files stay unchanged · Models stay on your machine'), el('span', '', 'Weight analysis runs when you request it')));
     const drawer = el('dialog', 'drawer'); drawer.id = 'tensor-detail'; drawer.setAttribute('aria-labelledby', 'drawer-title'); drawer.addEventListener('close', () => { state.drawerOpen = false; });
     drawer.addEventListener('click', e => { if (e.target === drawer && e.clientX < drawer.getBoundingClientRect().left) drawer.close(); });
-    shell.append(drawer); root.append(shell); renderTab();
+    shell.append(drawer); root.append(shell); renderPendingEdits(); renderTab();
+  }
+  function renderPendingEdits() {
+    const n = document.getElementById('pending-edits'); if (!n) return; n.replaceChildren(); n.hidden = !state.metadataEdits.length;
+    if (n.hidden) return;
+    add(n, el('h3', '', `${state.metadataEdits.length} pending metadata edits`), el('p', 'subtle', 'Edits apply to a new checkpoint when you save. Statistics describe the original. Pending edits are kept only while this inspector is open.'));
+    const list = el('ul'); for (const edit of state.metadataEdits) list.append(el('li', '', `${edit.key}: ${edit.value === null ? 'remove' : String(edit.value).slice(0, 120)}`));
+    add(n, list, add(el('div', 'actions'), action('Save checkpoint as…', 'saveCheckpoint', {}, 'primary'), action('Discard pending edits', 'discardEdits'))); updateBusy();
+  }
+  function metadataEditor() {
+    const m = state.model, n = el('section', 'card edit-form'); n.append(el('h3', '', 'Edit metadata'));
+    if (!m.editing?.metadata) { n.append(el('p', 'subtle', m.editing?.reason || 'Metadata editing is available for safetensors, GGUF, and ONNX files.')); return n; }
+    n.append(el('p', 'subtle', m.format === 'gguf' ? 'Existing GGUF keys retain their stored type. Arrays are preserved and cannot be rewritten from their preview. Use decimal text for 64-bit integers.' : m.format === 'onnx' ? 'Edit string metadata properties. Graph names, producer fields, and opsets are unchanged.' : 'Safetensors metadata values are strings.'));
+    const key = input('Metadata key', '', () => {}); key.type = 'text';
+    const type = select([['string', 'String'], ['bool', 'Boolean'], ['u32', 'Unsigned integer (32-bit)'], ['i32', 'Signed integer (32-bit)'], ['f32', 'Float (32-bit)'], ['f64', 'Float (64-bit)'], ['u64', 'Unsigned integer (64-bit)'], ['i64', 'Signed integer (64-bit)']], 'string', () => {}, 'New GGUF key type');
+    type.hidden = m.format !== 'gguf';
+    const value = el('textarea'); value.placeholder = 'Metadata value'; value.setAttribute('aria-label', 'Metadata value'); value.rows = 3;
+    const current = el('p', 'subtle', 'Enter a key to add or update.');
+    key.addEventListener('input', () => { const stored = m.editing.metadataTypes?.[key.value]; current.textContent = stored ? `Stored type: ${stored}` : 'New key'; });
+    // Form values are read at click time; nothing is interpolated into HTML.
+    const apply = button('Stage metadata edit', () => {
+      const stored = m.editing.metadataTypes?.[key.value], kind = stored || type.value;
+      let v = value.value;
+      try {
+        if (m.format === 'gguf' && kind !== 'string' && !['u64', 'i64'].includes(kind)) v = JSON.parse(v);
+        send('stageMetadata', { key: key.value, value: v, ...(m.format === 'gguf' && !stored ? { valueType: kind } : {}) });
+      } catch { showError('Enter a JSON number or true/false for this metadata type.'); }
+    }, 'primary'); apply.dataset.action = 'stageMetadata';
+    const remove = button('Stage removal', () => send('stageMetadata', { key: key.value, value: null })); remove.dataset.action = 'stageMetadata';
+    add(n, key, type, current, value, add(el('div', 'actions'), apply, remove)); return n;
   }
   function renderTab() {
     const content = document.getElementById('content'); if (!content) return; content.replaceChildren();
@@ -176,7 +206,7 @@
   function renderInfo(content) {
     const pane = el('section', 'info-pane'), s = state.model.summary; pane.append(heading('Model details', 'File metadata, precision distribution, and exact stored counts.')); const grid = el('div', 'info-grid');
     add(grid, add(el('div', 'card'), el('h3', '', 'Checkpoint'), pairs([['Stored values', integer(s.parameters)], ['Tensors', integer(s.tensorCount)], [state.model.source ? 'Primary weight files' : 'File size', bytes(s.fileBytes)], ['Tensor storage', `${bytes(s.tensorBytes)}${s.unknownByteSizes ? ' (partial)' : ''}`]]), el('p', 'path', state.model.path)), add(el('div', 'card'), el('h3', '', 'Precision distribution'), precisionChart(s)));
-    add(pane, grid, state.model.source?.kind === 'ollama' && ollamaInfo(state.model.source), disclosure('Model metadata', el('pre', '', JSON.stringify(state.model.metadata, null, 2))), disclosure('Interpretation & sampling', el('p', 'subtle', 'Layer groups and the tree follow tensor names. They do not recover forward-pass order. Counts describe stored values, including buffers and aliases, rather than unique trainable parameters. ONNX counts include supported initializers and Constant tensors in parsed graphs.'), el('p', 'subtle', `Statistics sample up to ${integer(state.settings.sampleSize)} values in evenly spaced windows. Small tensors are checked in full. Samples can miss values outside the sampled positions.`)), action('PyTorch setup instructions', 'setup')); content.append(pane);
+    add(pane, grid, metadataEditor(), state.model.source?.kind === 'ollama' && ollamaInfo(state.model.source), disclosure('Model metadata', el('pre', '', JSON.stringify(state.model.metadata, null, 2))), disclosure('Interpretation & sampling', el('p', 'subtle', 'Layer groups and the tree follow tensor names. They do not recover forward-pass order. Counts describe stored values, including buffers and aliases, rather than unique trainable parameters. ONNX counts include supported initializers and Constant tensors in parsed graphs.'), el('p', 'subtle', `Statistics sample up to ${integer(state.settings.sampleSize)} values in evenly spaced windows. Small tensors are checked in full. Samples can miss values outside the sampled positions.`)), action('PyTorch setup instructions', 'setup')); content.append(pane);
   }
   function renderOperators(content) { const pane = el('section', 'operators-pane'); pane.append(heading('ONNX operators', 'Operator order and input/output names from the serialized graph. Subgraphs use scoped names.')); const { wrap, body } = table(['Operator', 'Type', 'Inputs', 'Outputs']); for (const n of state.model.nodes.slice(0, 1000)) body.append(add(el('tr'), el('td', 'name-cell', n.name), el('td', 'dtype', n.opType), el('td', 'name-cell', n.inputs.join(', ')), el('td', 'name-cell', n.outputs.join(', ')))); pane.append(wrap); if (state.model.nodes.length > 1000) pane.append(el('p', 'subtle', 'Showing 1,000 operators. Export JSON for the complete list.')); content.append(pane); }
   function updateBusy() {
@@ -193,6 +223,7 @@
     else if (m.type === 'busy') { state.busy = true; state.busyLabel = m.label; for (const id of ['error', 'drawer-error']) { const n = document.getElementById(id); if (n) n.hidden = true; } updateBusy(); }
     else if (m.type === 'idle') { state.busy = false; updateBusy(); }
     else if (m.type === 'error') showError(m.message);
+    else if (m.type === 'edits') { state.metadataEdits = m.metadata; renderPendingEdits(); }
     else if (m.type === 'checkpointSaved') { state.savedPath = m.path; const n = document.getElementById('error'); if (n) { n.className = 'notice'; n.setAttribute('role', 'status'); n.textContent = `Checkpoint copy saved: ${m.path}`; n.hidden = false; } }
   });
   buildShell(); send('ready');

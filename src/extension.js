@@ -7,6 +7,7 @@ const os = require('node:os');
 const backend = require('./backend');
 const ollama = require('./ollama');
 const checkpoint = require('./checkpoint');
+const metadata = require('./metadata');
 const VIEW = 'weightscope.inspector';
 const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'] };
 
@@ -67,6 +68,8 @@ function activate(context) {
       const key = document.uri.toString(), uri = document.uri;
       panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
       let model, target, rows = [], stats = new Map(), busy = false, operation, disposed = false, ready = false;
+      let metadataEdits = new Map();
+      const editPayload = () => ({ type: 'edits', metadata: [...metadataEdits.values()] });
       const post = data => { if (!disposed) panel.webview.postMessage(data); };
       const payload = () => ({ type: 'model', model: { ...backend.publicModel(model), editing: checkpoint.capabilities(model) }, settings: settings() });
       async function run(label, fn) {
@@ -80,7 +83,7 @@ function activate(context) {
       async function refresh() {
         await run('Reading model metadata…', async options => {
           model = await backend.inspect(uri.fsPath, options); target = undefined; rows = []; stats.clear();
-          post(payload());
+          metadataEdits.clear(); post(payload()); post(editPayload());
         });
       }
       async function compare(targetUri) {
@@ -95,11 +98,19 @@ function activate(context) {
       }
       const actions = {
         ready: async () => {
-          if (ready) { if (model) { post(payload()); for (const [name, data] of stats) post({ type: 'statistics', name, data }); if (target) post({ type: 'comparison', target: backend.publicModel(target), rows }); } return; }
+          if (ready) { if (model) { post(payload()); post(editPayload()); for (const [name, data] of stats) post({ type: 'statistics', name, data }); if (target) post({ type: 'comparison', target: backend.publicModel(target), rows }); } return; }
           ready = true; await refresh();
           const next = pending.get(key); pending.delete(key); if (next) await compare(next);
         },
-        refresh,
+        refresh: async () => { if (metadataEdits.size) throw new Error('Discard pending edits before refreshing the model.'); await refresh(); },
+        stageMetadata: message => {
+          if (busy) throw new Error('Wait for the current operation before editing.');
+          if (!model || !checkpoint.capabilities(model).metadata) throw new Error('This checkpoint does not support metadata editing.');
+          const change = { key: message.key, value: message.value, ...(message.valueType ? { type: message.valueType } : {}) };
+          const next = new Map(metadataEdits); next.set(change.key, change);
+          metadata.validateForModel(model, [...next.values()]); metadataEdits = next; post(editPayload());
+        },
+        discardEdits: () => { if (busy) throw new Error('Wait for the current operation before discarding edits.'); metadataEdits.clear(); post(editPayload()); },
         compare: () => compare(),
         openOllama: async () => { const chosen = await chooseOllama('Open a downloaded Ollama model'); if (chosen) await open(chosen); },
         compareOllama: async () => { const chosen = await chooseOllama('Select an Ollama model to compare with the current model'); if (chosen) await compare(chosen); },
@@ -131,7 +142,7 @@ function activate(context) {
           const output = await vscode.window.showSaveDialog({ title: 'Save checkpoint as a new file', defaultUri: vscode.Uri.file(path.join(directory, `${name}.copy${support.extension}`)), filters: { Checkpoint: [support.extension.slice(1)] } });
           if (!output) return;
           if (output.scheme !== 'file') throw new Error('Save the checkpoint on the extension host.');
-          const result = await checkpoint.saveCheckpoint(model, output.fsPath, options);
+          const result = await checkpoint.saveCheckpoint(model, output.fsPath, { ...options, metadata: [...metadataEdits.values()] });
           post({ type: 'checkpointSaved', path: result.path });
           vscode.window.showInformationMessage(`Checkpoint copy saved: ${result.path}`);
         }),

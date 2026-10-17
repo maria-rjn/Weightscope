@@ -145,6 +145,12 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font:
 .footer { display: flex; justify-content: space-between; gap: 15px; flex-wrap: wrap; border-top: 1px solid var(--border); padding: 14px 26px; color: var(--muted); font-size: 10px; }
 .loading { padding: 70px 26px; text-align: center; }.loading button { margin: 15px 5px; }
 [hidden] { display: none !important; }
+.pending-edits { margin: 12px 26px; padding: 18px; border: 1px solid var(--accent); border-radius: 8px; }
+.pending-edits li { font: 12px/1.7 var(--vscode-editor-font-family, monospace); overflow-wrap: anywhere; }
+.edit-form { display: grid; gap: 12px; margin: 20px 0; }
+.edit-form input, .edit-form select, .edit-form textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.edit-form textarea { resize: vertical; padding: 12px; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 5px; font: inherit; }
+.edit-form .subtle { margin: 0; }
 @media (max-width: 900px) { .local-label { display: none; }.workspace.with-tree { grid-template-columns: 175px minmax(0, 1fr); }.section-heading { flex-wrap: wrap; }.info-grid { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .topbar, .hero { padding-left: 16px; padding-right: 16px; }.topbar { gap: 8px; }.brand { font-size: 14px; }.topbar .actions { gap: 6px; }.topbar .primary { font-size: 11px; padding: 8px; }.tabs { padding: 0 16px; gap: 20px; }.explore-pane, .compare-pane, .info-pane, .operators-pane { padding: 22px 16px; }.toolbar { flex-wrap: wrap; }.toolbar input { flex-basis: 100%; }.toolbar select { width: 100%; }.layer-grid, .change-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }.layer-card, .change-cell { padding: 14px; }.group-name { font-size: 11px; }.layer-value { font-size: 22px; }.workspace.with-tree { grid-template-columns: 1fr; }.sidebar { max-height: 300px; border: 1px solid var(--border); padding: 15px; border-radius: 8px; }.compare-start { grid-template-columns: 1fr; margin: 15px 0 35px; }.step-arrow { transform: rotate(90deg); }.compare-step { min-height: 0; }.model-facts { gap: 12px; }.drawer { width: 100vw; }.footer { padding: 14px 16px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

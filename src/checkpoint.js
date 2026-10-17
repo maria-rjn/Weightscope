@@ -4,12 +4,14 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const backend = require('./backend');
 const { Reader, cancelled } = require('./binary');
+const { writeMetadata, TYPES } = require('./metadata');
 
 const EXTENSIONS = { safetensors: ['.safetensors'], gguf: ['.gguf'], onnx: ['.onnx'], pytorch: ['.pt', '.pth'] };
 const CHUNK = 1024 * 1024;
 function capabilities(model) {
   if (model.source?.kind === 'ollama' && model.format === 'safetensors') return { save: false, reason: 'Multi-blob Ollama models cannot yet be exported as one checkpoint. Open an individual safetensors file to edit it.' };
-  return { save: Boolean(EXTENSIONS[model.format]), extension: EXTENSIONS[model.format]?.[0] };
+  return { save: Boolean(EXTENSIONS[model.format]), extension: EXTENSIONS[model.format]?.[0], metadata: ['safetensors', 'gguf', 'onnx'].includes(model.format),
+    metadataTypes: model.format === 'gguf' ? Object.fromEntries(model.layout.metadataEntries.map(e => [e.key, Object.keys(TYPES).find(k => TYPES[k] === e.type) || 'array'])) : {} };
 }
 async function copyRange(reader, output, start, length, transform) {
   for (let pos = 0; pos < length; pos += CHUNK) {
@@ -62,6 +64,8 @@ async function transaction(model, destination, options, write) {
   }
 }
 async function saveCheckpoint(model, destination, options = {}) {
-  return transaction(model, destination, options, (reader, output) => copyRange(reader, output, 0, reader.size));
+  return transaction(model, destination, options, (reader, output) => options.metadata?.length
+    ? writeMetadata(model, reader, output, options.metadata, { copyRange, writeAll })
+    : copyRange(reader, output, 0, reader.size));
 }
 module.exports = { saveCheckpoint, capabilities, transaction, copyRange, writeAll };

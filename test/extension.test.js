@@ -49,6 +49,12 @@ test('extension activation, webview handshake, stats, comparison, export and che
     saveFile = path.join(dir, 'copy.safetensors'); await receive({ type: 'saveCheckpoint' });
     assert.equal(posts.findLast(m => m.type === 'checkpointSaved').path, saveFile);
     assert.deepEqual(await fs.readFile(saveFile), await fs.readFile(base));
+    await receive({ type: 'stageMetadata', key: 'description', value: 'edited' });
+    assert.equal(posts.findLast(m => m.type === 'edits').metadata.length, 1);
+    await receive({ type: 'refresh' }); assert.match(posts.findLast(m => m.type === 'error').message, /Discard pending/);
+    saveFile = path.join(dir, 'edited.safetensors'); await receive({ type: 'saveCheckpoint' });
+    assert.equal((await require('../src/backend').inspect(saveFile)).metadata.description, 'edited');
+    await receive({ type: 'discardEdits' }); assert.deepEqual(posts.findLast(m => m.type === 'edits').metadata, []);
     saveFile = base; await receive({ type: 'saveCheckpoint' }); assert.match(posts.findLast(m => m.type === 'error').message, /never overwrites/);
     assert.throws(() => provider.openCustomDocument({ scheme: 'vscode-vfs' }), /extension host/);
   } finally { dispose?.(); await fs.rm(dir, { recursive: true, force: true }); }
