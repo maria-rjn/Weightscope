@@ -11,7 +11,7 @@ Open `.safetensors`, `.gguf`, `.onnx`, `.pt`, or `.pth` files, or select a downl
 ## Install
 
 1. Clone this repository and run `npm ci`, then `npm run package` (Node.js 22 or newer is required for the packaging tools).
-2. In VS Code, run **Extensions: Install from VSIX…** and select the generated `artifacts/weightscope-0.3.0.vsix`.
+2. In VS Code, run **Extensions: Install from VSIX…** and select the generated `artifacts/weightscope-0.3.1.vsix`.
 3. Open a supported model file, or run **WeightScope: Inspect Model**.
 
 If another extension owns these file types, use **Reopen Editor With… → WeightScope**. Requires VS Code 1.90 or newer. Works locally and with Remote SSH when the extension and model are on the remote host.
@@ -32,6 +32,8 @@ The tensor difference drawer overlays baseline bars and a target line with ident
 ## Open downloaded Ollama models
 
 Run **WeightScope: Open Ollama Model** from the Command Palette (`Cmd+Shift+P` on macOS, `Ctrl+Shift+P` on Windows/Linux), then select a model/tag. The picker reads the local catalog and opens the original weights in place. Ollama does not need to be running, and no rename, copy, download, or model execution is needed.
+
+You can also open a tag file directly under `<store>/manifests/<registry>/<namespace>/<model>/<tag>`, such as `~/.ollama/models/manifests/registry.ollama.ai/library/tev1/4b`. WeightScope resolves this small JSON manifest to its downloaded weight blobs. If the file is already open as JSON, use **Reopen Editor With… → WeightScope**, or select the model with **WeightScope: Open Ollama Model**.
 
 Both GGUF model blobs and newer safetensors tensor blobs are supported. Manifest tensor names are retained, including image model namespaces and shared weight aliases. Local manifest-list references resolve to a downloaded variant, preferring GGUF when available. Model names, tags, registry, prompt template, system prompt, generation parameters, licenses, and small model configurations appear under **Model details → Ollama source & prompt settings**. Additional adapter/projector files are listed separately and excluded from primary weight totals.
 
