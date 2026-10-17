@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2
 
 - Add a WeightScope Activity Bar icon with a **Start** view. It has buttons to inspect a model file, open an Ollama model, compare checkpoints or Ollama models, and set up PyTorch, so you can start without opening a model first.
 
