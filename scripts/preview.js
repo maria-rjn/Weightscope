@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const backend = require('../src/backend');
 const checkpoint = require('../src/checkpoint');
 const metadata = require('../src/metadata');
+const tensorEdits = require('../src/tensor-edits');
 const { makeDemo } = require('./make-demo');
 const { store } = require('../test/ollama-fixtures');
 async function main() {
@@ -22,8 +23,9 @@ async function main() {
   }
   const ollamaModel = await ollamaCheckpoint(demo.base, 'base'), ollamaTarget = await ollamaCheckpoint(demo.target, 'finetuned');
   const rows = backend.structureDiff(model, target), options = { sampleSize: 32768, maxDiffTensors: 500, absoluteTolerance: 0 };
-  const edits = new Map();
-  const publicModel = m => ({ ...backend.publicModel(m), editing: checkpoint.capabilities(m) });
+  const edits = new Map(), tensorPlan = new Map();
+  const publicModel = m => ({ ...backend.publicModel(m), editing: checkpoint.capabilities(m), tensors: backend.publicModel(m).tensors.map(t => ({ ...t, editing: checkpoint.tensorCapabilities(m, m.byName.get(t.name)) })) });
+  const editPayload = () => ({ type: 'edits', metadata: [...edits.values()], tensors: [...tensorPlan.values()].map(e => ({ name: e.name, operation: e.operation, factor: e.factor, sourceName: e.source?.name, sourcePath: e.source?.model.path })) });
   const server = http.createServer(async (req, res) => {
     try {
       const route = new URL(req.url, 'http://127.0.0.1').pathname;
@@ -40,16 +42,20 @@ async function main() {
       } else if (req.method === 'POST' && route === '/action') {
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 2 * 1024 * 1024) throw new Error('Request too large.'); }
         const m = JSON.parse(body), result = [], base = m.previewOllama ? ollamaModel : model, comparison = m.previewOllama ? ollamaTarget : target;
-        if (m.type === 'ready' || m.type === 'refresh' || m.type === 'openOllama') result.push({ type: 'model', model: publicModel(m.type === 'openOllama' ? ollamaModel : base), settings: options }, { type: 'edits', metadata: [...edits.values()] });
+        if (m.type === 'ready' || m.type === 'refresh' || m.type === 'openOllama') result.push({ type: 'model', model: publicModel(m.type === 'openOllama' ? ollamaModel : base), settings: options }, editPayload());
         else if (m.type === 'stageMetadata') {
           if (!checkpoint.capabilities(base).metadata) throw new Error('This checkpoint does not support metadata editing.');
           const change = { key: m.key, value: m.value, ...(m.valueType ? { type: m.valueType } : {}) };
           const next = new Map(edits); next.set(change.key, change); metadata.validateForModel(base, [...next.values()]);
-          edits.set(change.key, change); result.push({ type: 'edits', metadata: [...edits.values()] });
-        } else if (m.type === 'discardEdits') { edits.clear(); result.push({ type: 'edits', metadata: [] }); }
+          edits.set(change.key, change); result.push(editPayload());
+        } else if (m.type === 'stageTensor') {
+          const edit = { name: m.name, operation: m.operation, factor: m.factor, ...(m.operation === 'replace' ? { source: { model: target, name: m.name } } : {}) };
+          const next = new Map(tensorPlan); next.set(edit.name, edit); tensorEdits.validate(base, [...next.values()]);
+          tensorPlan.set(edit.name, edit); result.push(editPayload());
+        } else if (m.type === 'discardEdits') { edits.clear(); tensorPlan.clear(); result.push(editPayload()); }
         else if (m.type === 'saveCheckpoint') {
           const output = path.join(__dirname, '..', 'output', 'preview', `saved-${crypto.randomUUID()}.safetensors`);
-          const saved = await checkpoint.saveCheckpoint(base, output, { ...options, metadata: [...edits.values()] }); result.push({ type: 'checkpointSaved', path: saved.path });
+          const saved = await checkpoint.saveCheckpoint(base, output, { ...options, metadata: [...edits.values()], tensors: [...tensorPlan.values()] }); result.push({ type: 'checkpointSaved', path: saved.path });
         }
         else if (m.type === 'stats') result.push({ type: 'statistics', name: m.name, data: await backend.tensorStatistics(base, m.name, options) });
         else if (m.type === 'compare' || m.type === 'compareOllama') result.push({ type: 'comparison', target: backend.publicModel(comparison), rows });

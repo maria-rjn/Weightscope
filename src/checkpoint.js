@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const backend = require('./backend');
 const { Reader, cancelled } = require('./binary');
 const { writeMetadata, TYPES } = require('./metadata');
+const tensorEdits = require('./tensor-edits');
 
 const EXTENSIONS = { safetensors: ['.safetensors'], gguf: ['.gguf'], onnx: ['.onnx'], pytorch: ['.pt', '.pth'] };
 const CHUNK = 1024 * 1024;
@@ -44,7 +45,7 @@ async function transaction(model, destination, options, write) {
     reader = await Reader.open(model.path, options.signal);
     if (backend.identity(await reader.handle.stat()) !== model.identity) throw new Error('The checkpoint changed on disk. Refresh before saving.');
     output = await fs.open(temp, 'wx', 0o600);
-    await write(reader, output);
+    await write(reader, output, temp);
     cancelled(options.signal);
     await output.sync(); await output.close(); output = undefined;
     const verified = await backend.inspect(temp, options);
@@ -64,8 +65,21 @@ async function transaction(model, destination, options, write) {
   }
 }
 async function saveCheckpoint(model, destination, options = {}) {
-  return transaction(model, destination, options, (reader, output) => options.metadata?.length
-    ? writeMetadata(model, reader, output, options.metadata, { copyRange, writeAll })
-    : copyRange(reader, output, 0, reader.size));
+  const edits = options.tensors || []; tensorEdits.validate(model, edits);
+  return transaction(model, destination, options, async (reader, output, temp) => {
+    if (edits.length && model.format === 'pytorch') {
+      for (const edit of edits) if (edit.source) await backend.assertCurrent(edit.source.model);
+      await backend.pythonRequest({ action: 'edit', path: model.path, output: temp, edits: edits.map(e => ({ name: e.name, operation: e.operation, factor: e.factor,
+        ...(e.source ? { sourcePath: e.source.model.path, sourceName: e.source.name } : {}) })) }, options);
+      for (const edit of edits) if (edit.source) await backend.assertCurrent(edit.source.model);
+      return;
+    }
+    if (options.metadata?.length) await writeMetadata(model, reader, output, options.metadata, { copyRange, writeAll });
+    else await copyRange(reader, output, 0, reader.size);
+    if (edits.length) {
+      const saved = await backend.inspect(temp, options);
+      await tensorEdits.applyNative(model, saved, reader, output, edits, options);
+    }
+  });
 }
-module.exports = { saveCheckpoint, capabilities, transaction, copyRange, writeAll };
+module.exports = { saveCheckpoint, capabilities, transaction, copyRange, writeAll, tensorCapabilities: tensorEdits.capabilities };

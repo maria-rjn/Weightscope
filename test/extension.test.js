@@ -20,7 +20,7 @@ test('extension activation, webview handshake, stats, comparison, export and che
     commands: { registerCommand: (name, fn) => { commands.set(name, fn); return { dispose() {} }; }, executeCommand: async () => {} },
     window: {
       registerCustomEditorProvider: (_view, p) => { provider = p; return { dispose() {} }; },
-      showOpenDialog: async () => [uri(target)], showSaveDialog: async () => uri(saveFile), showInformationMessage() {}
+      showOpenDialog: async () => [uri(target)], showSaveDialog: async () => uri(saveFile), showInformationMessage() {}, showQuickPick: async items => items[0]
     }
   };
   const originalLoad = Module._load;
@@ -55,6 +55,16 @@ test('extension activation, webview handshake, stats, comparison, export and che
     saveFile = path.join(dir, 'edited.safetensors'); await receive({ type: 'saveCheckpoint' });
     assert.equal((await require('../src/backend').inspect(saveFile)).metadata.description, 'edited');
     await receive({ type: 'discardEdits' }); assert.deepEqual(posts.findLast(m => m.type === 'edits').metadata, []);
+    await receive({ type: 'stageTensor', name: 'layer.weight', operation: 'scale', factor: 3 });
+    assert.equal(posts.findLast(m => m.type === 'edits').tensors[0].factor, 3);
+    saveFile = path.join(dir, 'scaled.safetensors'); await receive({ type: 'saveCheckpoint' });
+    assert.deepEqual(await require('../src/backend').sample(await require('../src/backend').inspect(saveFile), 'layer.weight'), [3, 6]);
+    await receive({ type: 'discardEdits' });
+    await receive({ type: 'stageTensor', name: 'layer.weight', operation: 'replace' });
+    assert.equal(posts.findLast(m => m.type === 'edits').tensors[0].sourcePath, target);
+    saveFile = path.join(dir, 'replaced.safetensors'); await receive({ type: 'saveCheckpoint' });
+    assert.deepEqual(await require('../src/backend').sample(await require('../src/backend').inspect(saveFile), 'layer.weight'), [1, 3]);
+    await receive({ type: 'discardEdits' });
     saveFile = base; await receive({ type: 'saveCheckpoint' }); assert.match(posts.findLast(m => m.type === 'error').message, /never overwrites/);
     assert.throws(() => provider.openCustomDocument({ scheme: 'vscode-vfs' }), /extension host/);
   } finally { dispose?.(); await fs.rm(dir, { recursive: true, force: true }); }

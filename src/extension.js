@@ -8,6 +8,7 @@ const backend = require('./backend');
 const ollama = require('./ollama');
 const checkpoint = require('./checkpoint');
 const metadata = require('./metadata');
+const tensorEdits = require('./tensor-edits');
 const VIEW = 'weightscope.inspector';
 const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'] };
 
@@ -68,10 +69,12 @@ function activate(context) {
       const key = document.uri.toString(), uri = document.uri;
       panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
       let model, target, rows = [], stats = new Map(), busy = false, operation, disposed = false, ready = false;
-      let metadataEdits = new Map();
-      const editPayload = () => ({ type: 'edits', metadata: [...metadataEdits.values()] });
+      let metadataEdits = new Map(), pendingTensors = new Map();
+      const editPayload = () => ({ type: 'edits', metadata: [...metadataEdits.values()], tensors: [...pendingTensors.values()].map(e => ({ name: e.name, operation: e.operation, factor: e.factor,
+        ...(e.source ? { sourcePath: e.source.model.path, sourceName: e.source.name } : {}) })) });
       const post = data => { if (!disposed) panel.webview.postMessage(data); };
-      const payload = () => ({ type: 'model', model: { ...backend.publicModel(model), editing: checkpoint.capabilities(model) }, settings: settings() });
+      const payload = () => ({ type: 'model', model: { ...backend.publicModel(model), editing: checkpoint.capabilities(model),
+        tensors: backend.publicModel(model).tensors.map(t => ({ ...t, editing: checkpoint.tensorCapabilities(model, model.byName.get(t.name)) })) }, settings: settings() });
       async function run(label, fn) {
         if (busy) { post({ type: 'error', message: 'An analysis is already running. Cancel it or wait for it to finish.' }); return; }
         busy = true; operation = new AbortController();
@@ -83,7 +86,7 @@ function activate(context) {
       async function refresh() {
         await run('Reading model metadata…', async options => {
           model = await backend.inspect(uri.fsPath, options); target = undefined; rows = []; stats.clear();
-          metadataEdits.clear(); post(payload()); post(editPayload());
+          metadataEdits.clear(); pendingTensors.clear(); post(payload()); post(editPayload());
         });
       }
       async function compare(targetUri) {
@@ -102,7 +105,7 @@ function activate(context) {
           ready = true; await refresh();
           const next = pending.get(key); pending.delete(key); if (next) await compare(next);
         },
-        refresh: async () => { if (metadataEdits.size) throw new Error('Discard pending edits before refreshing the model.'); await refresh(); },
+        refresh: async () => { if (metadataEdits.size || pendingTensors.size) throw new Error('Discard pending edits before refreshing the model.'); await refresh(); },
         stageMetadata: message => {
           if (busy) throw new Error('Wait for the current operation before editing.');
           if (!model || !checkpoint.capabilities(model).metadata) throw new Error('This checkpoint does not support metadata editing.');
@@ -110,7 +113,26 @@ function activate(context) {
           const next = new Map(metadataEdits); next.set(change.key, change);
           metadata.validateForModel(model, [...next.values()]); metadataEdits = next; post(editPayload());
         },
-        discardEdits: () => { if (busy) throw new Error('Wait for the current operation before discarding edits.'); metadataEdits.clear(); post(editPayload()); },
+        stageTensor: message => run('Preparing tensor edit…', async options => {
+          if (!model) throw new Error('Open a checkpoint first.');
+          const edit = { name: message.name, operation: message.operation, factor: message.factor };
+          const tensor = model.byName.get(edit.name);
+          if (!tensor || !checkpoint.tensorCapabilities(model, tensor).operations.includes(edit.operation)) throw new Error('This tensor does not support the requested operation.');
+          if (edit.operation === 'replace') {
+            const chosen = await choose('Choose the replacement checkpoint'); if (!chosen) return;
+            const donor = await backend.inspect(chosen.fsPath, options);
+            const compatible = donor.tensors.filter(t => {
+              try { tensorEdits.validate(model, [{ ...edit, source: { model: donor, name: t.name } }]); return true; } catch { return false; }
+            }).sort((a, b) => Number(b.name === tensor.name) - Number(a.name === tensor.name));
+            if (!compatible.length) throw new Error('The checkpoint has no tensors with a matching shape, dtype, and storage layout.');
+            const selection = await vscode.window.showQuickPick(compatible.map(t => ({ label: t.name, description: `${t.dtype} · ${t.shape.join(' × ') || 'scalar'}` })), { title: 'Choose the replacement tensor', matchOnDescription: true });
+            if (!selection) return;
+            edit.source = { model: donor, name: selection.label };
+          }
+          const next = new Map(pendingTensors); next.set(edit.name, edit); tensorEdits.validate(model, [...next.values()]);
+          pendingTensors = next; post(editPayload());
+        }),
+        discardEdits: () => { if (busy) throw new Error('Wait for the current operation before discarding edits.'); metadataEdits.clear(); pendingTensors.clear(); post(editPayload()); },
         compare: () => compare(),
         openOllama: async () => { const chosen = await chooseOllama('Open a downloaded Ollama model'); if (chosen) await open(chosen); },
         compareOllama: async () => { const chosen = await chooseOllama('Select an Ollama model to compare with the current model'); if (chosen) await compare(chosen); },
@@ -142,7 +164,7 @@ function activate(context) {
           const output = await vscode.window.showSaveDialog({ title: 'Save checkpoint as a new file', defaultUri: vscode.Uri.file(path.join(directory, `${name}.copy${support.extension}`)), filters: { Checkpoint: [support.extension.slice(1)] } });
           if (!output) return;
           if (output.scheme !== 'file') throw new Error('Save the checkpoint on the extension host.');
-          const result = await checkpoint.saveCheckpoint(model, output.fsPath, { ...options, metadata: [...metadataEdits.values()] });
+          const result = await checkpoint.saveCheckpoint(model, output.fsPath, { ...options, metadata: [...metadataEdits.values()], tensors: [...pendingTensors.values()] });
           post({ type: 'checkpointSaved', path: result.path });
           vscode.window.showInformationMessage(`Checkpoint copy saved: ${result.path}`);
         }),
