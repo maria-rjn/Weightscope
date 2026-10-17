@@ -9,6 +9,7 @@ const ollama = require('./ollama');
 const checkpoint = require('./checkpoint');
 const metadata = require('./metadata');
 const tensorEdits = require('./tensor-edits');
+const { metadataDiff } = require('./math');
 const VIEW = 'weightscope.inspector';
 const filters = { 'Model checkpoints': ['safetensors', 'pt', 'pth', 'onnx', 'gguf'] };
 
@@ -69,12 +70,16 @@ function activate(context) {
       const key = document.uri.toString(), uri = document.uri;
       panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
       let model, target, rows = [], stats = new Map(), busy = false, operation, disposed = false, ready = false;
-      let metadataEdits = new Map(), pendingTensors = new Map();
+      let metadataEdits = new Map(), pendingTensors = new Map(), savedUri;
+      const savedFiles = new Set();
       const editPayload = () => ({ type: 'edits', metadata: [...metadataEdits.values()], tensors: [...pendingTensors.values()].map(e => ({ name: e.name, operation: e.operation, factor: e.factor,
         ...(e.source ? { sourcePath: e.source.model.path, sourceName: e.source.name } : {}) })) });
       const post = data => { if (!disposed) panel.webview.postMessage(data); };
-      const payload = () => ({ type: 'model', model: { ...backend.publicModel(model), editing: checkpoint.capabilities(model),
-        tensors: backend.publicModel(model).tensors.map(t => ({ ...t, editing: checkpoint.tensorCapabilities(model, model.byName.get(t.name)) })) }, settings: settings() });
+      const payload = () => {
+        const data = backend.publicModel(model);
+        return { type: 'model', model: { ...data, editing: checkpoint.capabilities(model), tensors: data.tensors.map(t => ({ ...t, editing: checkpoint.tensorCapabilities(model, model.byName.get(t.name)) })) }, settings: settings() };
+      };
+      const comparisonPayload = () => ({ type: 'comparison', target: backend.publicModel(target), rows, metadata: metadataDiff(model, target) });
       async function run(label, fn) {
         if (busy) { post({ type: 'error', message: 'An analysis is already running. Cancel it or wait for it to finish.' }); return; }
         busy = true; operation = new AbortController();
@@ -94,14 +99,15 @@ function activate(context) {
         if (!targetUri) targetUri = await choose('Select target checkpoint (current model is the baseline)');
         if (!targetUri) return;
         await run('Reading target checkpoint…', async options => {
+          await backend.assertCurrent(model);
           const next = await backend.inspect(targetUri.fsPath, options);
           target = next; rows = backend.structureDiff(model, target);
-          post({ type: 'comparison', target: backend.publicModel(target), rows });
+          post(comparisonPayload());
         });
       }
       const actions = {
         ready: async () => {
-          if (ready) { if (model) { post(payload()); post(editPayload()); for (const [name, data] of stats) post({ type: 'statistics', name, data }); if (target) post({ type: 'comparison', target: backend.publicModel(target), rows }); } return; }
+          if (ready) { if (model) { post(payload()); post(editPayload()); if (savedUri) post({ type: 'checkpointSaved', path: savedUri.fsPath }); for (const [name, data] of stats) post({ type: 'statistics', name, data }); if (target) post(comparisonPayload()); } return; }
           ready = true; await refresh();
           const next = pending.get(key); pending.delete(key); if (next) await compare(next);
         },
@@ -133,6 +139,8 @@ function activate(context) {
           pendingTensors = next; post(editPayload());
         }),
         discardEdits: () => { if (busy) throw new Error('Wait for the current operation before discarding edits.'); metadataEdits.clear(); pendingTensors.clear(); post(editPayload()); },
+        compareSaved: () => { if (!savedUri) throw new Error('Save a checkpoint copy first.'); return compare(savedUri); },
+        openSaved: () => { if (!savedUri) throw new Error('Save a checkpoint copy first.'); return open(savedUri); },
         compare: () => compare(),
         openOllama: async () => { const chosen = await chooseOllama('Open a downloaded Ollama model'); if (chosen) await open(chosen); },
         compareOllama: async () => { const chosen = await chooseOllama('Select an Ollama model to compare with the current model'); if (chosen) await compare(chosen); },
@@ -165,8 +173,9 @@ function activate(context) {
           if (!output) return;
           if (output.scheme !== 'file') throw new Error('Save the checkpoint on the extension host.');
           const result = await checkpoint.saveCheckpoint(model, output.fsPath, { ...options, metadata: [...metadataEdits.values()], tensors: [...pendingTensors.values()] });
+          savedUri = vscode.Uri.file(result.path); savedFiles.add(result.path);
           post({ type: 'checkpointSaved', path: result.path });
-          vscode.window.showInformationMessage(`Checkpoint copy saved: ${result.path}`);
+          vscode.window.showInformationMessage(`Checkpoint saved: ${result.path}`);
         }),
         setup,
         export: async () => {
@@ -174,14 +183,20 @@ function activate(context) {
           const defaultPath = model.source?.kind === 'ollama' ? path.join(os.homedir(), `${model.source.name.replace(/[^a-zA-Z0-9._-]/g, '_')}.weightscope.json`) : path.join(path.dirname(uri.fsPath), `${path.basename(uri.fsPath)}.weightscope.json`);
           const output = await vscode.window.showSaveDialog({ title: 'Export WeightScope report', defaultUri: vscode.Uri.file(defaultPath), filters: { JSON: ['json'] } });
           if (!output) return;
-          const protectedPaths = [model.path, target?.path, ...(model.protectedPaths || []), ...(target?.protectedPaths || [])].filter(Boolean).map(p => path.resolve(p));
+          const donors = [...pendingTensors.values()].flatMap(e => e.source ? [e.source.model.path, ...(e.source.model.protectedPaths || [])] : []);
+          const protectedPaths = [model.path, target?.path, ...savedFiles, ...donors, ...(model.protectedPaths || []), ...(target?.protectedPaths || [])].filter(Boolean).map(p => path.resolve(p));
           if (output.scheme === 'file' && protectedPaths.includes(path.resolve(output.fsPath))) throw new Error('A report cannot overwrite an inspected checkpoint.');
           if (output.scheme === 'file') {
             const destination = await fs.realpath(output.fsPath).catch(e => { if (e.code === 'ENOENT') return path.resolve(output.fsPath); throw e; });
             for (const checkpoint of protectedPaths) if (destination === await fs.realpath(checkpoint).catch(e => { if (e.code === 'ENOENT') return checkpoint; throw e; })) throw new Error('A report cannot overwrite an inspected checkpoint through a symlink.');
+            const existing = await fs.stat(output.fsPath).catch(e => { if (e.code === 'ENOENT') return null; throw e; });
+            if (existing) for (const checkpoint of protectedPaths) {
+              const source = await fs.stat(checkpoint).catch(e => { if (e.code === 'ENOENT') return null; throw e; });
+              if (source && source.dev === existing.dev && source.ino === existing.ino) throw new Error('A report cannot overwrite a checkpoint through a hard link.');
+            }
           }
           const report = { version: 1, exportedAt: new Date().toISOString(), model: backend.publicModel(model), statistics: Object.fromEntries(stats),
-            comparison: target ? { target: backend.publicModel(target), rows } : null,
+            comparison: target ? { target: backend.publicModel(target), rows, metadata: metadataDiff(model, target) } : null,
             note: 'Counts refer to stored tensor elements. Sample matches do not prove whole-tensor equality. Numerical metrics use the stated tolerance and sampling coverage.' };
           await vscode.workspace.fs.writeFile(output, Buffer.from(JSON.stringify(report, null, 2)));
           vscode.window.showInformationMessage(`WeightScope report saved: ${output.fsPath}`);

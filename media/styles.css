@@ -146,6 +146,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font:
 .loading { padding: 70px 26px; text-align: center; }.loading button { margin: 15px 5px; }
 [hidden] { display: none !important; }
 .pending-edits { margin: 12px 26px; padding: 18px; border: 1px solid var(--accent); border-radius: 8px; }
+.save-status { margin: 12px 26px; padding: 18px; border: 1px solid var(--mint); border-radius: 8px; }
+.save-status .actions, .pending-edits .actions { flex-wrap: wrap; }
 .pending-edits li { font: 12px/1.7 var(--vscode-editor-font-family, monospace); overflow-wrap: anywhere; }
 .edit-form { display: grid; gap: 12px; margin: 20px 0; }
 .edit-form input, .edit-form select, .edit-form textarea { width: 100%; min-width: 0; box-sizing: border-box; }

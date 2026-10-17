@@ -1,7 +1,7 @@
 {
   "name": "weightscope",
   "displayName": "WeightScope — Model & Checkpoint Inspector",
-  "description": "Inspect model layers, tensor health, precision and checkpoint drift locally, on demand.",
+  "description": "Inspect model checkpoints, edit weights and metadata in new copies, and compare drift locally.",
   "version": "0.3.0",
   "publisher": "weightscope-local",
   "license": "MIT",

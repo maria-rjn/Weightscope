@@ -24,6 +24,10 @@ Version 0.3.0 adds local Ollama catalog discovery, original GGUF blob inspection
 
 Explicit boundaries keep results trustworthy: name hierarchy is not a recovered execution graph; stored-element counts are not unique trainable counts; sample matches are not exact equality. Unsupported numerical decoders produce clear explanations rather than fabricated values.
 
+## Checkpoint editing
+
+The editor now supports validated Save As copies, staged scalar metadata changes in native formats, tensor replacement/scaling/zeroing where storage permits, and direct comparison of the saved result against the original. Save As publishes a new file without overwriting existing files. Native tensor edits stream complete tensor payloads; supported PyTorch edits use restricted CPU loading and serialization. Per-tensor capability explanations and the README describe format and memory limits. Editing changes serialized checkpoint data; training and inference evaluation remain separate workflows.
+
 ## Candidate next releases
 
 - Sharded safetensors indexes and aggregate model inspection.
