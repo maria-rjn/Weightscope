@@ -16,12 +16,22 @@ async function makeDemo(directory = path.join(__dirname, '..', 'examples')) {
   weight('model.norm.weight', [64], .01); weight('lm_head.weight', [512, 64], .04);
   const base = path.join(directory, 'tiny-transformer.safetensors'), target = path.join(directory, 'tiny-transformer-finetuned.safetensors');
   await F.safetensors(base, tensors, { architecture: 'Synthetic tiny transformer', purpose: 'Demo fixture, not a trained model', layers: '4' });
+  // The same weights as a Hugging Face style sharded checkpoint: three shards and an index.
+  const shardDirectory = path.join(directory, 'tiny-transformer-sharded'), weightMap = {}, parts = [t => /layers\.[01]\.|embed/.test(t.name), t => /layers\.[23]\./.test(t.name), t => !/layers\.|embed/.test(t.name)];
+  await fs.mkdir(shardDirectory, { recursive: true });
+  for (const [i, part] of parts.entries()) {
+    const shard = `model-0000${i + 1}-of-0000${parts.length}.safetensors`, selected = tensors.filter(part);
+    await F.safetensors(path.join(shardDirectory, shard), selected, { format: 'pt' });
+    for (const t of selected) weightMap[t.name] = shard;
+  }
+  const sharded = path.join(shardDirectory, 'model.safetensors.index.json');
+  await fs.writeFile(sharded, JSON.stringify({ metadata: { total_size: tensors.reduce((n, t) => n + t.values.length * 4, 0) }, weight_map: weightMap }, null, 2));
   const changed = tensors.filter(t => t.name !== 'model.norm.weight').map(t => ({ ...t, values: t.values.map((v, j) => t.name.includes('layers.2.') ? v + Math.sin(j) * .008 : v) }));
   changed.push({ name: 'adapter.lora_A.weight', shape: [4, 64], values: Array(256).fill(.001) });
   await F.safetensors(target, changed, { architecture: 'Synthetic tiny transformer', training_step: '1200' });
   await F.gguf(path.join(directory, 'tiny-model.gguf'), [{ name: 'blk.0.attn_q.weight', shape: [2, 2], values: [-1, 0, 1, 2] }]);
   await F.onnx(path.join(directory, 'tiny-model.onnx'), [{ name: 'linear.weight', shape: [2, 2], values: [-1, 0, 1, 2] }, { name: 'linear.bias', shape: [2], values: [0, .5] }], [{ name: 'linear', type: 'Gemm', inputs: ['input', 'linear.weight', 'linear.bias'], outputs: ['output'] }]);
-  return { base, target };
+  return { base, target, sharded };
 }
 if (require.main === module) makeDemo().then(({ base, target }) => console.log(`Created demo checkpoints:\n${base}\n${target}`)).catch(e => { console.error(e); process.exitCode = 1; });
 module.exports = { makeDemo };

@@ -8,6 +8,7 @@ const { Reader, cancelled } = require('./binary');
 const EXTENSIONS = { safetensors: ['.safetensors'], gguf: ['.gguf'], onnx: ['.onnx'], pytorch: ['.pt', '.pth'] };
 const CHUNK = 1024 * 1024;
 function capabilities(model) {
+  if (model.source?.kind === 'sharded') return { save: false, reason: 'Sharded safetensors checkpoints cannot yet be saved as a copy. Copy the model folder to keep every shard and its index together.' };
   if (model.source?.kind === 'ollama' && model.format === 'safetensors') return { save: false, reason: 'Multi-blob Ollama models cannot yet be exported as one checkpoint. Open an individual safetensors file to edit it.' };
   return { save: Boolean(EXTENSIONS[model.format]), extension: EXTENSIONS[model.format]?.[0] };
 }

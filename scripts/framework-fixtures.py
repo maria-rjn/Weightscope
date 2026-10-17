@@ -17,6 +17,16 @@ tensors = {"layer.weight": torch.arange(12, dtype=torch.float32).reshape(3, 4), 
 torch.save({"state_dict": tensors, "epoch": 7, "optimizer": {"slot": torch.ones(100)}}, directory / "official.pt")
 torch.save(tensors, directory / "legacy.pth", _use_new_zipfile_serialization=False)
 save_file({k: v.contiguous() for k, v in tensors.items()}, directory / "official.safetensors", metadata={"source": "upstream library"})
+# Hugging Face layout: upstream shards plus a transformers-style index with total_size and weight_map.
+sharded = directory / "sharded"
+sharded.mkdir()
+weight_map = {}
+for number, names in enumerate((("layer.weight", "layer.bias"), ("noncontiguous", "empty")), 1):
+    shard = f"model-{number:05d}-of-00002.safetensors"
+    save_file({k: tensors[k].contiguous() for k in names}, sharded / shard, metadata={"format": "pt"})
+    weight_map.update(dict.fromkeys(names, shard))
+total_size = sum(t.numel() * t.element_size() for t in tensors.values())
+(sharded / "model.safetensors.index.json").write_text(json.dumps({"metadata": {"total_size": total_size}, "weight_map": weight_map}, indent=2, sort_keys=True))
 
 class PicklePayload:
     def __reduce__(self):

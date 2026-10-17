@@ -1,5 +1,11 @@
 # Validation of version 0.3.0
 
+## Sharded safetensors update — October 17, 2026
+
+The isolated sharded-safetensors branch passed `npm run check` and all **77 tests with no failures or skips**, using the existing Python framework environment. New coverage opens Hugging Face indexes and individual shards as one checkpoint. It also covers sampling each tensor from its own shard, comparisons with single-file checkpoints, symlinked Hugging Face cache snapshots and repository naming, index-free grouping, and incomplete sets that fall back to one shard with a note. Inconsistent indexes are covered too: a missing shard, an absent, misplaced, or duplicated tensor, path traversal, non-safetensors shards, invalid JSON, and unindexed tensors. The remaining tests cover index and shard change detection, cancellation, export protection for every shard, and the disabled Save As. An upstream fixture writes shards with safetensors 0.8.0 and a transformers-style index; its BF16 and F32 tensors match the single-file checkpoint exactly.
+
+The real Qwen3-32B index in the local Hugging Face cache (17 shards, 707 tensors, 65,524,246,528 bytes) parsed and was named `Qwen/Qwen3-32B/model.safetensors`. Its shards were not downloaded, so opening it reported the incomplete download rather than inspecting weights. The browser preview was checked at desktop width and 320 px with a three-shard demo: the shard badge, per-shard table, the shard name in the tensor inspector, numerical analysis, and a sharded-to-single-file drift comparison. The page had no horizontal overflow or console errors. A real Extension Development Host session and a multi-gigabyte sharded model were not run.
+
 ## Visualization update — October 17, 2026
 
 The isolated visualization branch, including main's checkpoint Save As changes, passed `npm run check` and all **67 tests with no failures or skips**, using the existing Python framework environment. New coverage checks shared histogram domains, constant/empty/non-finite distributions, overflowing numeric ranges, zero baseline norms, exported distribution data, natural matrix ordering, normalized-name collisions, and retention of 135 groups × 12 roles. The VSIX also builds with the existing packager and no added runtime dependencies.

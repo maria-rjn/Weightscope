@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Open sharded Hugging Face safetensors checkpoints as one model from the `.safetensors.index.json` index or any `-0000X-of-0000N` shard, including Hugging Face cache snapshots. Totals, layer groups, statistics, and drift comparisons cover every shard.
+- Validate index weight maps against shard headers. Report missing shards, misplaced or duplicate tensors, and file names outside the model folder. Group complete shard sets that have no index by file name.
+- Show shard counts, a per-shard table, and each tensor's shard. Detect index and shard changes before analysis, and protect every shard from report overwrites.
+
 - Align model layer size bars on a shared scale, with stored-value and storage-byte measures and explicit unknown sizes.
 - Replace comparison cards with a searchable, paginated layer-by-tensor-role heatmap of relative L2 drift, preserving structural, precision, non-finite, and sampling states.
 - Add labeled SVG distributions, accessible bin-count tables, and baseline/target overlays computed with shared bins from the existing samples.
