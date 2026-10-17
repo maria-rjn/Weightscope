@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Decode Ollama MXFP8 packed weights with E4M3FN values and companion E8M0 scales for bounded statistics, histograms, and checkpoint comparison.
+- Show logical dimensions and weight counts in the tensor inspector while preserving stored shapes, counts, and dtypes in model summaries and exports.
+- Honor per-tensor quantization metadata in mixed blobs and keep scale tensors and unquantized floating-point tensors available for inspection.
+- Explain missing scales, incompatible block layouts, and unsupported packed formats without computing misleading statistics.
+
 ## 0.3.0
 
 - Add Open Ollama Model and Compare Ollama Models commands with searchable local model/tag pickers and custom store selection.

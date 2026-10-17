@@ -45,7 +45,7 @@ test('Ollama safetensors shards form one model and sample the right underlying f
   await assert.rejects(backend.tensorStatistics(model, 'layer.1.weight'), /blob changed/);
 });
 
-test('packed Ollama quantization exposes its scheme and refuses misleading numerical analysis', async t => {
+test('packed Ollama MXFP8 without scales exposes its scheme and refuses numerical analysis', async t => {
   const s = await fixture(t), raw = Buffer.alloc(8); raw.writeUInt32LE(0x12345678);
   const a = await s.blob('tensor', [{ name: 'packed.weight', shape: [2], dtype: 'U32', data: raw }], { metadata: { quant_type: 'mxfp8' } });
   const file = await s.manifest('packed', 'latest', [a]); const model = await backend.inspect(file);
