@@ -7,6 +7,7 @@
 - Color drift with a perceptually uniform ramp (reversed in light themes) in both views, and give exact zero drift its own neutral color.
 - Open **Explore** on a **Model map**: one cell per tensor, layer groups as columns and tensor roles as rows, colored by precision (with bits per value) or stored values without reading weights. **Scan weights** samples every tensor once on request, streams progress, and colors the map by weight RMS or largest magnitude; scanned statistics also appear in the tensor inspector. Layer size bars remain below the map.
 - Share one canvas grid between the drift fingerprint and the model map, including keyboard navigation and hover details.
+- Replace the README screenshots with images of real models: a SmolLM2-135M base-vs-instruct drift fingerprint, and the model map, RMS scan and weight image of Gemma 3 4B Q4_K_M. Add `npm run screenshots`, which regenerates them from the browser preview with headless Chrome and no new dependencies.
 - Add **Draw weight image** to the tensor inspector and **Draw change image** to the tensor difference drawer. Each draws the tensor (or target minus baseline) as up to 192 × 192 tiles colored by RMS or signed peak, with hover readouts, clipped or full color range, and the location of the largest value. Images read up to 4,194,304 values (262,144 for PyTorch) as evenly spaced runs of whole rows and state their coverage; change images use the same translated positions as GGUF comparisons.
 
 ## 0.4.2

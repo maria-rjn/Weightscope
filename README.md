@@ -4,9 +4,13 @@ A local VS Code extension for inspecting model checkpoints and answering **what 
 
 Open `.safetensors` (single-file or sharded), `.gguf`, `.onnx`, `.pt`, or `.pth` files, sharded PyTorch `.bin` checkpoints, or select a downloaded Ollama model from its local catalog. Explore a layer tree, shapes, stored parameter counts, dtype distribution, quantization metadata, tensor statistics, and checkpoint differences. Inspection and analysis run on demand. There are no uploads, network requests, or telemetry in the extension.
 
-![Model overview with aligned layer size bars](docs/images/layer-overview.jpg)
+![Drift fingerprint comparing SmolLM2-135M with SmolLM2-135M-Instruct: relative L2 change for every layer group and tensor role on a log scale](docs/images/drift-fingerprint.jpg)
 
-![Checkpoint comparison with a layer-by-tensor-role drift heatmap](docs/images/layer-drift-map.jpg)
+*What instruction tuning changed in SmolLM2-135M: every tensor of all 30 layers on one log scale. Layer 0 moved most (its input norm and value projection by about 32%, its output projection by 21%); value and output drift then fades with depth, while query and key drift roughly doubles, from about 6% to 12%.*
+
+![Model map of Gemma 3 4B (Ollama translategemma:4b) colored by stored precision](docs/images/model-map.jpg)
+
+*The model map of a real Q4_K_M GGUF (Gemma 3 4B via Ollama `translategemma:4b`), read from metadata alone: most projections are Q4_K, some `attn_v` and `ffn_down` layers stay in Q6_K, and the vision tower's `attn_v` mixes Q8_0 and Q5_0.*
 
 ## Install
 
@@ -26,6 +30,12 @@ If another extension owns these file types, use **Reopen Editor With… → Weig
 The map colors finite **relative L2 change** (`||target − baseline|| / ||baseline||`) on one scale shared across every page and filter, using a perceptually uniform ramp (reversed in light themes so more drift always has more contrast). The **Log scale** (default) spans the smallest to the largest positive drift, up to six decades, so a 0.1% change stays visible next to a 50% outlier; **Linear scale** runs from 0 to the largest drift. Color measures drift, not health. Exact zero drift has its own neutral color. Cells distinguish uncomputed and unavailable analysis, precision changes, non-finite mismatches, and structural changes; empty cells mean no tensor in that group/role. Full and sampled coverage is listed under the map and in each cell's details. A zero baseline norm shows **n/a**, not zero drift. If normalized names collide, the cell takes the largest drift among them and opens a list of every matching tensor.
 
 The **weight image** reduces a tensor to at most 192 × 192 tiles and colors each tile by its **RMS** (default) or its **signed peak**, the value with the largest magnitude, so a single outlier stays visible. Outlier channels show as bright lines, attention heads as bands, and untrained vocabulary rows as dark regions. Leading dimensions form rows and trailing dimensions form columns, in row-major order (a convolution kernel `[out, in, kh, kw]` draws as `out × in·kh·kw`). Tensors up to 4,194,304 values (262,144 for PyTorch) are read in full; larger ones read evenly spaced runs of whole rows, every column, and say how many rows were read. Colors clip the outer 0.5% of tiles by default, or use the full range. Hover a tile for its rows, columns, peak and RMS. In a comparison, **Draw change image** shows target minus baseline at the same positions, including translated GGUF tensors.
+
+![Weight image of Gemma 3 4B blk.0.attn_q.weight in the tensor inspector, colored by per-tile RMS](docs/images/weight-image.jpg)
+
+![Model map of Gemma 3 4B colored by weight RMS after a scan](docs/images/model-map-rms.jpg)
+
+*Top: the first query projection of Gemma 3 4B as an RMS image; horizontal bands follow its attention heads. Bottom: the same model after **Scan weights**, colored by RMS; the post-attention and post-FFN norm weights grow steadily with depth.*
 
 The tensor difference drawer overlays baseline bars and a target line with identical bin boundaries and a common vertical scale (percentage of finite analyzed values). It uses the existing bounded samples; no extra weight reads or background scans are needed. NaN/Inf diagnostics remain separate. JSON reports include the histogram bounds and both series.
 
@@ -138,10 +148,13 @@ npm run check
 npm test
 npm run demo
 npm run preview
+npm run screenshots
 npm run package
 ```
 
 Open this folder in VS Code and press **F5** to start the Extension Development Host. Open one of the generated files in `examples/`, or a shard in `examples/tiny-transformer-sharded/`. The browser preview at `http://127.0.0.1:4173` runs the same frontend against real synthetic safetensors checkpoints. Add `?ollama=1` for the generated Ollama catalog demo, or `?sharded=1` for the same weights as a three-shard checkpoint. File dialogs, the catalog picker, export, and cancellation belong to the VS Code integration.
+
+`npm run screenshots` regenerates the README images from the same preview with headless Chrome (set `CHROME_PATH` if Chrome is not in its default location). Point it at real checkpoints: `WEIGHTSCOPE_SHOT_MODEL` for the Explore images, `WEIGHTSCOPE_PREVIEW_BASE` and `WEIGHTSCOPE_PREVIEW_TARGET` for the drift map, and optionally `WEIGHTSCOPE_SHOT_TENSOR` for the weight image. The images above used Ollama `translategemma:4b` and the `model.safetensors` files of [HuggingFaceTB/SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M) and [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct), saved under their model names. Without them, it falls back to the synthetic demo checkpoints.
 
 Framework integration verification is optional and uses an isolated environment:
 
